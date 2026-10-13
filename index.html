@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>مدينة إجرائية AAA — Procedural City Forge</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="loading">
+    <div class="box">
+      <h1>مدينة إجرائية AAA</h1>
+      <p id="loadLabel">توليد الخامات PBR…</p>
+      <div class="bar"><i id="loadBar"></i></div>
+      <small id="loadHint">الخامات تُولَّد في Web Workers من حقل ارتفاع واحد (Albedo · Normal · Roughness · AO · Height)</small>
+    </div>
+  </div>
+
+  <aside id="panel">
+    <header>
+      <b>مدينة إجرائية AAA</b>
+      <button id="collapse" title="إخفاء">—</button>
+    </header>
+    <div id="panelBody">
+      <section>
+        <h3>الأدوات <small>Tools</small></h3>
+        <div class="tools">
+          <label><input type="radio" name="tool" value="orbit" checked /> تصفح</label>
+          <label><input type="radio" name="tool" value="strike" /> صاروخ</label>
+          <label><input type="radio" name="tool" value="implode" /> تفجير متحكَّم</label>
+        </div>
+        <label>قوة الانفجار <input id="power" type="range" min="0.5" max="2.2" step="0.05" value="1" /></label>
+        <div class="row"><button id="clearDebris">إعادة بناء المدينة</button></div>
+      </section>
+
+      <section>
+        <h3>المدينة <small>City</small></h3>
+        <label>البذرة Seed <input id="seed" type="number" value="2026" /></label>
+        <label>الحجم (بلوكات)
+          <select id="size"><option value="6">6×6</option><option value="8" selected>8×8</option><option value="10">10×10</option><option value="12">12×12</option></select>
+        </label>
+        <div class="row"><button id="generate">توليد</button><button id="randomSeed">مدينة عشوائية</button></div>
+      </section>
+
+      <section>
+        <h3>الإضاءة <small>Lighting</small></h3>
+        <label>الوقت <input id="time" type="range" min="0" max="24" step="0.05" value="15.5" /><span id="timeVal">15:30</span></label>
+        <label>دورة يوم تلقائية <input id="cycle" type="checkbox" /></label>
+        <label>اتجاه الشمس <input id="sunAz" type="range" min="-180" max="180" step="1" value="0" /></label>
+        <label>التعريض Exposure <input id="exposure" type="range" min="0.3" max="1.6" step="0.02" value="0.68" /></label>
+        <label>Bloom <input id="bloom" type="range" min="0" max="1" step="0.02" value="0.22" /></label>
+        <label>التشبع <input id="saturation" type="range" min="0.5" max="2" step="0.05" value="1.1" /></label>
+        <label>Contact AO <input id="contactAO" type="range" min="0" max="1" step="0.05" value="0.7" /></label>
+        <label>ارتداد الضوء Bounce <input id="bounce" type="range" min="0" max="2" step="0.05" value="0.35" /></label>
+        <label>SSAO <input id="ssao" type="checkbox" checked /></label>
+        <label>GI Probe (انعكاسات حية) <input id="probe" type="checkbox" checked /></label>
+      </section>
+
+      <section>
+        <h3>الخامات <small>Materials</small></h3>
+        <label>الدقة
+          <select id="texRes"><option value="512">512</option><option value="1024" selected>1K</option><option value="2048">2K</option><option value="4096">4K</option></select>
+          <button id="applyRes">تطبيق</button>
+        </label>
+        <small id="vram" class="note"></small>
+        <label>التجوية (أوساخ / مطر) <input id="weather" type="range" min="0" max="1.6" step="0.05" value="0.7" /></label>
+        <label>قوة Normal <input id="normalStr" type="range" min="0" max="2.5" step="0.05" value="1" /></label>
+      </section>
+
+      <section>
+        <h3>الأداء <small>Performance</small></h3>
+        <label>مسافة LOD <input id="lod" type="range" min="120" max="800" step="10" value="320" /></label>
+        <label>دقة العرض
+          <select id="pr"><option value="0.75">0.75×</option><option value="1">1×</option><option value="1.5" selected>1.5×</option><option value="2">2×</option></select>
+        </label>
+        <pre id="stats"></pre>
+      </section>
+      <p class="help">سحب يسار = تحريك · يمين = دوران · عجلة = تقريب · W A S D · نقرة = استخدام الأداة · 1/2/3 لتبديل الأدوات</p>
+    </div>
+  </aside>
+  <div id="toolHint"></div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
