@@ -10,6 +10,7 @@ import { STYLES } from './city/BuildingGenerator.js';
 import { Effects } from './destruction/Effects.js';
 import { Demolition } from './destruction/Demolition.js';
 import { FirstPerson } from './player/FirstPerson.js';
+import { exportCity } from './export/EngineExport.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -345,6 +346,30 @@ function onResize() {
 }
 addEventListener('resize', onResize);
 
+/* ---------- game-engine export ---------- */
+$('exRadius').addEventListener('input', (e) => ($('exRadiusVal').textContent = e.target.value));
+let exporting = false;
+async function runExport() {
+  if (exporting || !city) return null;
+  exporting = true; $('exBtn').disabled = true;
+  const opts = {
+    target: $('exTarget').value, region: $('exRegion').value, radius: +$('exRadius').value, texRes: +$('exRes').value,
+    center: (fps.active ? camera.position : controls.target).clone(),
+    collision: $('exCol').checked, markings: $('exMarks').checked, trees: $('exTrees').checked, props: $('exProps').checked,
+  };
+  try {
+    const { zip, stats } = await exportCity({ city, trees: city.trees, opts, onStatus: (msg, f) => ($('exStatus').textContent = `${msg} ${Math.round(f * 100)}%`) });
+    const url = URL.createObjectURL(new Blob([zip], { type: 'application/zip' }));
+    const a = document.createElement('a'); a.href = url; a.download = `aaa-city-${opts.target}-${city.layout.seed}.zip`; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    $('exStatus').textContent = `✓ ${stats.buildings} مبنى · ${stats.materials} خامة · glb ${stats.glbMB.toFixed(1)} MB · ${stats.seconds.toFixed(0)}s`;
+    return stats;
+  } catch (err) {
+    console.error(err); $('exStatus').textContent = 'فشل التصدير: ' + err.message; return null;
+  } finally { exporting = false; $('exBtn').disabled = false; }
+}
+$('exBtn').addEventListener('click', runExport);
+
 /* ---------- frame loop ---------- */
 const clock = new THREE.Clock();
 const fwd = new THREE.Vector3(), rgt = new THREE.Vector3(), shakeOff = new THREE.Vector3(), fpsFocus = new THREE.Vector3(), fpsFwd = new THREE.Vector3();
@@ -352,6 +377,7 @@ let fpsAcc = 0, fpsN = 0, frameRate = 0, statT = 0, mapT = 0;
 
 function frame() {
   requestAnimationFrame(frame);
+  if (exporting) { clock.getDelta(); return; } // export owns the main thread; resume without a time jump
   const dt = Math.min(clock.getDelta(), 0.05);
   renderer.info.reset();
 
@@ -416,4 +442,4 @@ function frame() {
 })();
 
 // debug / automation handle
-window.__city = { renderer, fps, toggleWalk, keys, get city() { return city; }, get demolition() { return demolition; }, lighting, camera, controls, lib, mats, params, setTool, select, buildCity, syncParamUI, pick: (r) => pick(r) };
+window.__city = { runExport, renderer, fps, toggleWalk, keys, get city() { return city; }, get demolition() { return demolition; }, lighting, camera, controls, lib, mats, params, setTool, select, buildCity, syncParamUI, pick: (r) => pick(r) };

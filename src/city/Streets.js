@@ -92,7 +92,7 @@ function paint(g, rgb, emit = 0) {
   g.setAttribute('color', new THREE.BufferAttribute(c, 3)); g.setAttribute('aEmit', new THREE.BufferAttribute(e, 1));
   return g;
 }
-function lampGeometry() {
+export function lampGeometry() {
   const pole = new THREE.CylinderGeometry(0.07, 0.11, 7.6, 10).translate(0, 3.8, 0);
   const base = new THREE.CylinderGeometry(0.18, 0.24, 0.7, 10).translate(0, 0.35, 0);
   const ring = new THREE.TorusGeometry(0.12, 0.03, 6, 12).rotateX(Math.PI / 2).translate(0, 0.9, 0);
@@ -100,7 +100,7 @@ function lampGeometry() {
   const head = new THREE.BoxGeometry(0.42, 0.14, 0.8).translate(0, 7.4, 1.85);
   return mergeGeometries([pole, base, ring, arm, head].map(flat));
 }
-function carGeometry() {
+export function carGeometry() {
   const body = new THREE.BoxGeometry(1.85, 0.62, 4.4, 1, 1, 4), p = body.attributes.position;
   for (let i = 0; i < p.count; i++) { const z = p.getZ(i), y = p.getY(i); if (Math.abs(z) > 1.9 && y > 0) p.setY(i, y - 0.12); } // sloped bonnet / boot
   body.translate(0, 0.62, 0);

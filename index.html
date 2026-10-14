@@ -102,6 +102,22 @@
       </section>
 
       <section>
+        <h3>تصدير إلى محرك ألعاب <small>Export</small></h3>
+        <label>المحرك <select id="exTarget"><option value="unreal">Unreal Engine 5</option><option value="unity">Unity</option><option value="godot">Godot 4</option><option value="gltf">glTF عام (Blender…)</option></select></label>
+        <label>المنطقة <select id="exRegion"><option value="radius">حول الكاميرا</option><option value="all">المدينة كاملة</option></select></label>
+        <label>نصف القطر (م) <input id="exRadius" type="range" min="60" max="900" step="10" value="250" /><span id="exRadiusVal">250</span></label>
+        <label>دقة الخامات <select id="exRes"><option value="1024">1K</option><option value="2048" selected>2K</option><option value="4096">4K</option></select></label>
+        <div class="styles">
+          <label><input type="checkbox" id="exCol" checked /> تصادم</label>
+          <label><input type="checkbox" id="exMarks" checked /> علامات الطرق</label>
+          <label><input type="checkbox" id="exTrees" checked /> أشجار</label>
+          <label><input type="checkbox" id="exProps" checked /> أعمدة وسيارات</label>
+        </div>
+        <div class="row"><button id="exBtn" class="accent">⬇ تصدير ZIP</button></div>
+        <small id="exStatus" class="note">glTF 2.0 + خامات PBR + مجسمات تصادم + سكربت إعداد للمحرك</small>
+      </section>
+
+      <section>
         <h3>الأداء <small>Performance</small></h3>
         <label>مسافة LOD المباني <input id="lod" type="range" min="120" max="800" step="10" value="320" /></label>
         <label>مسافة LOD الأشجار <input id="treeLod" type="range" min="40" max="500" step="10" value="150" /></label>
