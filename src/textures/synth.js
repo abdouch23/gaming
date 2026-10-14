@@ -249,7 +249,8 @@ function recipe(layer, seed, M) {
         // alligator cracks in old surface + long sealed (tar) cracks
         worley(u, v, 14, 14, S + 6, W3);
         const cm = crackM(u, v);
-        if (!inP && W3[1] - W3[0] < 0.035 * sstep(0.05, 0.4, cm)) { h -= 0.005; g *= 0.35; ro = 0.95; }
+        const cw = 0.018 * sstep(0.1, 0.45, cm);
+        if (!inP && W3[1] - W3[0] < cw) { const k = 1 - (W3[1] - W3[0]) / cw; h -= 0.0015 * k; g *= 1 - 0.5 * k; ro = 0.95; }
         worley(u, v, 3, 3, S + 7, W3);
         if (W3[1] - W3[0] < 0.012 && cm < 0.1) { g = 0.025; ro = 0.3; h = Math.max(h, 0.0016); }
         const ol = sstep(0.4, 0.7, oil(u, v));
