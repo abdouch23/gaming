@@ -35,3 +35,15 @@ body.aim canvas { cursor: crosshair; }
 .styles label { background: #1b1f26; padding: 3px 7px; border-radius: 6px; margin: 0 !important; font-size: 11.5px; }
 #params label span, #panel label span { min-width: 34px; text-align: left; direction: ltr; color: #9aa4b2; font: 11px ui-monospace, monospace; }
 #minimap { width: 100%; aspect-ratio: 1; margin-top: 8px; border-radius: 8px; background: #20252c; cursor: pointer; }
+#panel button.accent { background: #7a4a16; border-color: #b9792e; }
+#crosshair { position: fixed; left: 50%; top: 50%; width: 22px; height: 22px; transform: translate(-50%, -50%); pointer-events: none; z-index: 5; }
+#crosshair::before, #crosshair::after { content: ''; position: absolute; background: rgba(255, 255, 255, 0.9); box-shadow: 0 0 2px #000; }
+#crosshair::before { left: 10px; top: 2px; width: 2px; height: 18px; }
+#crosshair::after { top: 10px; left: 2px; height: 2px; width: 18px; }
+#fpsHud { position: fixed; left: 14px; bottom: 14px; background: var(--bg); padding: 6px 12px; border-radius: 8px; font: 12px ui-monospace, Consolas, monospace; direction: ltr; pointer-events: none; }
+#fpsOverlay { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); z-index: 8; cursor: pointer; }
+#fpsOverlay .box { background: var(--bg); padding: 18px 26px; border-radius: 12px; text-align: center; line-height: 1.8; }
+#fpsOverlay b { font-size: 18px; color: var(--acc); }
+body.walking #panel { display: none; }
+body.walking.paused #panel { display: block; }
+.hidden { display: none !important; }

@@ -197,6 +197,10 @@ export class LevelLighting {
     this.lastProbe.set(1e9, 0, 0);
   }
 
+  /** SSAOPass caches near/far at construction; call after changing the camera's clip planes */
+  syncCamera() {
+    for (const m of [this.ssao.ssaoMaterial, this.ssao.depthRenderMaterial]) { m.uniforms.cameraNear.value = this.cam.near; m.uniforms.cameraFar.value = this.cam.far; }
+  }
   rebuild() { this._buildSAO(); this.lastProbe.set(1e9, 0, 0); }
   resize(w, h) {
     this.comp.setSize(w, h); const pr = this.R.getPixelRatio();
