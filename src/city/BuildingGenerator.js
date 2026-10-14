@@ -58,7 +58,7 @@ export function makeBuilding(o) {
     floors, fh, gh, bay, tiers, H, roofType: S.roofType, roofH,
     wall: S.wall, base: S.base, roofLayer: S.roof, win: S.win, tint,
     glassTint: o.style === 'tower' ? r.pick(GLASS_TINTS) : [0.55, 0.62, 0.66],
-    mirror: o.style === 'tower' ? 0.6 : o.style === 'office' ? 0.25 : 0,
+    mirror: o.style === 'tower' ? 0.38 : o.style === 'office' ? 0.18 : 0,
     shutter: r.pick(SHUTTER_TINTS), awning: r.chance(0.6) ? r.pick(AWNING_TINTS) : null,
     blank: { left: !!o.blankLeft, right: !!o.blankRight },
     antenna: o.style === 'tower' && r.chance(0.55),

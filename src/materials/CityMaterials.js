@@ -31,7 +31,7 @@ vec3 interiorRoom(vec2 c, vec3 vT, float seed, vec2 ws, float night){
   if(c.y>1.-blind)col=vec3(.85,.82,.74)*(.9+.1*sin(c.y*120.));
   float lit=step(h21(vec2(seed,3.3)),mix(.28,.48,night));
   vec3 lightCol=mix(vec3(1.,.78,.5),vec3(.85,.92,1.),step(.65,h21(vec2(seed,4.4))));
-  return col*mix(vec3(.07),lightCol*mix(.75,2.4,night),lit)+col*(1.-night)*.05;
+  return col*mix(vec3(.07),lightCol*mix(.75,2.4,night),lit)*mix(uDay,1.,night)+col*(1.-night)*uDay*.35;
 }
 // procedural window grid of the facade (LOD / debris surfaces). F = (bay, floorH, groundH, style)
 float facadeWindow(vec2 f, vec4 F, out vec2 cuv, out vec2 cid, out vec2 ws, out float edge){
@@ -64,7 +64,7 @@ const FRAG_DECL = /* glsl */`
 precision highp sampler2DArray;
 uniform sampler2DArray uAlb, uNrm; uniform sampler2D uGrime;
 uniform float uTile[16], uMetal[16], uAnti[16];
-uniform float uWeather, uNormalStr, uNight, uWet, uDetail, uPom[16], uPomOn, uLodDist, uLodBand;
+uniform float uWeather, uDay, uNormalStr, uNight, uWet, uDetail, uPom[16], uPomOn, uLodDist, uLodBand;
 flat varying float cLayer; flat varying vec4 cFacade; flat varying float cSeed;
 varying vec2 cUv; varying vec3 cTint; varying vec3 cWP; varying vec3 cWN;
 ` + COMMON_GLSL;
@@ -139,7 +139,7 @@ float wRough, wMetal, wAO; vec3 wN, wEmis = vec3(0.);
   float cav = (1. - wAO) * 1.3;
   float dirt = clamp((streak * .85 + splash + roofDirt + cav * (Li == 9 ? .12 : .45)) * uWeather, 0., 1.); // 9 = asphalt
   dirt = clamp(dirt * (1.2 - hgt * .45), 0., 1.); // settles into low areas first
-  alb = mix(alb, alb * vec3(.5, .45, .38), dirt * .8);
+  alb = mix(alb, alb * vec3(.66, .6, .52), dirt * .7);
   wRough = clamp(wRough + dirt * .08 - streak * uWeather * .12, .04, 1.);
   float moss = (1. - smoothstep(0., 1.4, cWP.y)) * vert * smoothstep(.55, .78, gB.b) * uWeather * step(Lf, 2.5);
   alb = mix(alb, vec3(.12, .16, .07), moss * .6);
@@ -237,7 +237,7 @@ export class CityMaterials {
     this.u = {
       uAlb: { value: null }, uNrm: { value: null }, uGrime: { value: null },
       uTile: { value: pad16((d) => d.meters) }, uMetal: { value: pad16((d) => d.metal) }, uAnti: { value: pad16((d) => d.anti) },
-      uWeather: { value: 0.7 }, uNormalStr: { value: 1.0 }, uNight: lighting.uniforms.uNight, uWet: { value: 0 }, uDetail: { value: 1 },
+      uWeather: { value: 0.5 }, uDay: { value: 0.6 }, uNormalStr: { value: 1.0 }, uNight: lighting.uniforms.uNight, uWet: { value: 0 }, uDetail: { value: 1 },
       uPom: { value: pad16((d) => d.pom || 0) }, uPomOn: { value: 1 }, uLodDist: { value: 320 }, uLodBand: { value: 40 },
     };
     lib.onChange((l) => { this.u.uAlb.value = l.alb; this.u.uNrm.value = l.nrm; this.u.uGrime.value = l.grime; });

@@ -118,7 +118,7 @@ vec4 lmCone(vec3 p, vec3 d, float tanA, float t, float tMax, int steps, bool ref
         float win = step(.3, fl) * step(fl, .88) * step(.12, bay) * step(bay, .88) * (1. - smoothstep(2., 3.5, lod));
         vec2 cell = floor(vec2(dot(q.xz, vec2(nW.z, -nW.x)) / 2.9, q.y / 3.4));
         vec3 room = vec3(1., .72, .42) * step(lmH21(cell), mix(.12, .5, uLmNight)) * mix(.35, 1.6, uLmNight);
-        Lw = mix(Lw, Lw * .2 + lmSky(reflect(d, nW)) * .3 + room, win);
+        Lw = mix(Lw, Lw * .15 + lmSky(reflect(d, nW)) * .12 + room, win);
       }
       Lr += T * occ * Lw; T *= free;
     }
@@ -245,7 +245,7 @@ export class Lumina {
       uLmSunDir: { value: new THREE.Vector3(0, 1, 0) }, uLmSunE: { value: new THREE.Vector3() }, uLmSkyE: { value: new THREE.Vector3() },
       uLmSkyTop: { value: new THREE.Vector3() }, uLmSkyHor: { value: new THREE.Vector3() }, uLmGround: { value: new THREE.Vector3() },
     };
-    this.skyScale = 0.42; // sky radiance used for lighting relative to the visible dome
+    this.skyScale = 0.7; // sky radiance used for lighting relative to the visible dome
 
     // radiance caches (Lumen-style): city-wide coarse cache + camera-centred fine clipmap (double buffered)
     const cacheRT = (n) => new THREE.WebGLRenderTarget(n * DIRS, n * LAYERS, { type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
@@ -360,6 +360,8 @@ export class Lumina {
     u.uLmSkyTop.value.set(skyTop.r, skyTop.g, skyTop.b).multiplyScalar(k);
     u.uLmSkyHor.value.set(skyHor.r, skyHor.g, skyHor.b).multiplyScalar(k);
     u.uLmSkyE.value.copy(u.uLmSkyTop.value).multiplyScalar(0.55).addScaledVector(u.uLmSkyHor.value, 0.45).multiplyScalar(Math.PI);
+    const desat = (v, k) => { const l = v.x * 0.2126 + v.y * 0.7152 + v.z * 0.0722; v.set(l + (v.x - l) * k, l + (v.y - l) * k, l + (v.z - l) * k); };
+    desat(u.uLmSkyE.value, 0.55); desat(u.uLmSkyTop.value, 0.7); desat(u.uLmSkyHor.value, 0.7);
     const g = this.avg ? this.avg[L.ASPHALT] : [0.08, 0.08, 0.08];
     const gE = u.uLmSunE.value.clone().multiplyScalar(Math.max(sunDir.y, 0)).add(u.uLmSkyE.value).multiplyScalar(1 / Math.PI);
     u.uLmGround.value.set(g[0] * 2 * gE.x, g[1] * 2 * gE.y, g[2] * 2 * gE.z);

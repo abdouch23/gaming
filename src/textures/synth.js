@@ -258,6 +258,7 @@ function recipe(layer, seed, M) {
         const ol = sstep(0.4, 0.7, oil(u, v));
         g *= 1 - ol * 0.35; ro -= ol * 0.25;
         g *= 0.92 + 0.16 * sstep(-0.4, 0.6, wm); // sun-bleached areas
+        g = Math.min(1, g * 2.0);
         o.h = h; pal(o, [g, g, g * 1.03]); o.ro = clamp01(ro);
       };
     }
@@ -352,7 +353,7 @@ export function synthesizeLayer(layer, N, seed = 1, onProgress) {
   for (let i = 0; i < NN; i++) {
     const j = i * 4, ao = 1 - Math.min(0.85, 2.2 * occ1[i] / 0.03 + 1.2 * Math.max(0, B2[i] - H[i]) / 0.15);
     const c = cav[i] / cmax; // >0 convex edge, <0 crevice
-    const k = (1 + Math.max(0, c) * 0.12) * (1 - Math.max(0, -c) * 0.25) * (0.75 + 0.25 * ao);
+    const k = (1 + Math.max(0, c) * 0.1) * (1 - Math.max(0, -c) * 0.15) * (0.92 + 0.08 * ao);
     alb[j] *= k; alb[j + 1] *= k; alb[j + 2] *= k; alb[j + 3] = (H[i] - hmin) * hr * 255;
     nrm[j + 3] = ao * 255;
     nrm[j + 2] = Math.min(255, nrm[j + 2] + Math.max(0, -c) * 20);

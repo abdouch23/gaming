@@ -110,6 +110,7 @@ function buildCity() {
   lighting.setBounds(city.bounds);
   lighting.lumina.setCity(layout);
   lighting.rebuild();
+  lighting.resetExposure();
   fps.setWorld(city, demolition);
   drawMinimap(true);
   console.info(`city: ${layout.buildings.length} buildings, ${layout.trees.length} trees in ${(performance.now() - t0).toFixed(0)} ms`);
@@ -298,6 +299,7 @@ bindRange('time', (v) => { lighting.setTime(v); $('timeVal').textContent = fmtTi
 $('cycle').addEventListener('change', (e) => (state.cycle = e.target.checked));
 bindRange('sunAz', (v) => { lighting.params.sunAzOffset = v; lighting.setTime(); });
 bindRange('exposure', (v) => (lighting.params.exposure = v));
+$('autoExp').addEventListener('change', (e) => { lighting.params.autoExposure = e.target.checked; lighting.resetExposure(); });
 bindRange('bloom', (v) => (lighting.params.bloom = v));
 bindRange('saturation', (v) => (lighting.params.saturation = v));
 bindRange('contactAO', (v) => (lighting.params.contactAO = v));
@@ -311,16 +313,15 @@ $('pom').addEventListener('change', (e) => (mats.u.uPomOn.value = e.target.check
 $('farSh').addEventListener('change', (e) => (lighting.lumina.u.uLmFarSh.value = e.target.checked ? 1 : 0));
 // scalability presets: Lumina ranges / steps, POM, shadow resolution, SSAO
 const QUALITY = {
-  low: { steps: 6, near: 60, mid: 220, pom: 0, shadow: 2048, ssao: false },
-  medium: { steps: 8, near: 100, mid: 320, pom: 1, shadow: 2048, ssao: true },
-  high: { steps: 10, near: 140, mid: 450, pom: 1, shadow: 4096, ssao: true },
-  epic: { steps: 14, near: 220, mid: 700, pom: 1, shadow: 4096, ssao: true },
+  low: { steps: 6, near: 60, mid: 220, pom: 0, shadow: 2048 },
+  medium: { steps: 8, near: 100, mid: 320, pom: 1, shadow: 2048 },
+  high: { steps: 10, near: 140, mid: 450, pom: 1, shadow: 4096 },
+  epic: { steps: 14, near: 220, mid: 700, pom: 1, shadow: 4096 },
 };
 $('quality').addEventListener('change', (e) => {
   const q = QUALITY[e.target.value], u = lighting.lumina.u, sun = lighting.sun;
   u.uLmSteps.value = q.steps; u.uLmNear.value = q.near; u.uLmMid.value = q.mid;
   mats.u.uPomOn.value = q.pom; $('pom').checked = !!q.pom;
-  lighting.params.ssao = q.ssao; $('ssao').checked = q.ssao;
   if (sun.shadow.mapSize.x !== q.shadow) { sun.shadow.mapSize.set(q.shadow, q.shadow); lighting.opts.shadowMap = q.shadow; if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } }
 });
 bindRange('wet', (v) => (mats.u.uWet.value = v));
@@ -364,6 +365,8 @@ function frame() {
   if (!fps.active) controls.update();
   if (state.cycle) { const t = (lighting.params.time + dt * 0.4) % 24; $('time').value = t; $('timeVal').textContent = fmtTime(t); lighting.setTime(t); }
 
+  // interiors seen through windows by day scale with daylight (keeps them plausible under auto exposure)
+  mats.u.uDay.value = THREE.MathUtils.clamp(0.06 * lighting.sun.intensity, 0.03, 0.3);
   if (fps.active) { // tight, sharp shadow box ahead of the player
     lighting.params.shadowRadius = 75;
     lighting.setFocus(fpsFocus.copy(camera.position).addScaledVector(fps.forward(fpsFwd).setY(0).normalize(), 30).setY(0));
