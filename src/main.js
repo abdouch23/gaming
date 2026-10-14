@@ -9,6 +9,7 @@ import { City } from './city/City.js';
 import { STYLES } from './city/BuildingGenerator.js';
 import { Effects } from './destruction/Effects.js';
 import { Demolition } from './destruction/Demolition.js';
+import { FirstPerson } from './player/FirstPerson.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -33,6 +34,7 @@ const lib = new TextureLibrary(renderer);
 const mats = new CityMaterials(lib, lighting);
 const effects = new Effects(scene, lighting);
 
+const fps = new FirstPerson(camera, renderer.domElement, effects.audio);
 let city = null, demolition = null, selected = null;
 const state = { tool: 'orbit', power: 1, cycle: false };
 
@@ -107,6 +109,7 @@ function buildCity() {
   demolition = new Demolition(lighting.level, city, mats, effects, lighting);
   lighting.setBounds(city.bounds);
   lighting.rebuild();
+  fps.setWorld(city, demolition);
   drawMinimap(true);
   console.info(`city: ${layout.buildings.length} buildings, ${layout.trees.length} trees in ${(performance.now() - t0).toFixed(0)} ms`);
 }
@@ -138,7 +141,7 @@ function drawMinimap(rebuild) {
   g.drawImage(mapCache, 0, 0);
   const { s, cx, cz } = mapXf, X = (x) => (x - cx) * s + W / 2, Z = (z) => (z - cz) * s + W / 2;
   const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
-  const p = controls.target, a = Math.atan2(dir.z, dir.x);
+  const p = fps.active ? camera.position : controls.target, a = Math.atan2(dir.z, dir.x);
   g.fillStyle = 'rgba(255,177,92,.25)'; g.beginPath(); g.moveTo(X(camera.position.x), Z(camera.position.z));
   g.arc(X(camera.position.x), Z(camera.position.z), 40, a - 0.45, a + 0.45); g.closePath(); g.fill();
   g.fillStyle = '#ffb15c'; g.beginPath(); g.arc(X(p.x), Z(p.z), 4, 0, 7); g.fill();
@@ -148,6 +151,7 @@ $('minimap').addEventListener('click', (e) => {
   if (!mapXf) return;
   const r = e.target.getBoundingClientRect(), k = mapXf.W / r.width;
   const x = ((e.clientX - r.left) * k - mapXf.W / 2) / mapXf.s + mapXf.cx, z = ((e.clientY - r.top) * k - mapXf.W / 2) / mapXf.s + mapXf.cz;
+  if (fps.active) { fps.teleport(x, z); return; }
   const d = new THREE.Vector3(x - controls.target.x, 0, z - controls.target.z);
   controls.target.add(d); camera.position.add(d);
 });
@@ -192,39 +196,86 @@ const keys = new Set();
 addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
   keys.add(e.code);
+  if (e.code === 'KeyF') { toggleWalk(); return; }
+  if (fps.active && (e.code === 'Space' || e.code.startsWith('Arrow'))) e.preventDefault();
   const t = { Digit1: 'orbit', Digit2: 'edit', Digit3: 'strike', Digit4: 'implode' }[e.code]; if (t) setTool(t);
   if (e.code === 'Delete' && selected) $('inspDelete').click();
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
+addEventListener('blur', () => keys.clear());
+
+/* ---------- FPS walk mode ---------- */
+function toggleWalk() {
+  if (!city) return;
+  if (!fps.active) {
+    fps.enter(controls);
+    if (state.tool === 'orbit') setTool('strike');
+    document.body.classList.add('walking');
+    fps.lock();
+  } else {
+    fps.exit(controls);
+    document.body.classList.remove('walking', 'paused');
+    $('fpsOverlay').classList.add('hidden');
+  }
+  lighting.syncCamera();
+  $('crosshair').classList.toggle('hidden', !fps.active);
+  $('fpsHud').classList.toggle('hidden', !fps.active);
+  $('walkBtn').textContent = fps.active ? '🛑 خروج من وضع المشي (F)' : '🚶 وضع المشي FPS (F)';
+}
+fps.onLockChange = (locked) => {
+  const paused = fps.active && !locked;
+  $('fpsOverlay').classList.toggle('hidden', !paused);
+  document.body.classList.toggle('paused', paused);
+  if (!locked) keys.clear();
+};
+$('walkBtn').addEventListener('click', toggleWalk);
+$('walkExit').addEventListener('click', (e) => { e.stopPropagation(); toggleWalk(); });
+$('fpsOverlay').addEventListener('click', () => fps.lock());
+$('sens').addEventListener('input', (e) => (fps.sens = +e.target.value));
 
 function setTool(t) {
   state.tool = t;
   document.querySelectorAll('input[name=tool]').forEach((r) => (r.checked = r.value === t));
   document.body.classList.toggle('aim', t !== 'orbit');
   if (t !== 'edit') select(null);
-  const hint = { orbit: '', edit: 'انقر على مبنى لتعديل طرازه وعدد طوابقه أو حذفه', strike: 'انقر على أي مبنى أو شارع لإطلاق صاروخ', implode: 'انقر على مبنى لتفجيره تفجيراً متحكَّماً' }[t];
+  const hint = fps.active ? {} : { orbit: '', edit: 'انقر على مبنى لتعديل طرازه وعدد طوابقه أو حذفه', strike: 'انقر على أي مبنى أو شارع لإطلاق صاروخ', implode: 'انقر على مبنى لتفجيره تفجيراً متحكَّماً' }[t];
   $('toolHint').textContent = hint; $('toolHint').classList.toggle('on', !!hint);
 }
 
 const raycaster = new THREE.Raycaster(), ndc = new THREE.Vector2();
 let down = null;
-renderer.domElement.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY, t: performance.now(), b: e.button }; });
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (fps.active) { // crosshair interaction
+    down = null;
+    if (!fps.locked) { fps.lock(); return; }
+    if (e.button === 0) useTool(0, 0);
+    return;
+  }
+  down = { x: e.clientX, y: e.clientY, t: performance.now(), b: e.button };
+});
 renderer.domElement.addEventListener('pointerup', (e) => {
   if (!down || down.b !== 0) return;
   const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y), dt = performance.now() - down.t;
   down = null;
   if (moved > 6 || dt > 400 || state.tool === 'orbit' || !city) return;
-  ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  useTool((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+});
+
+function useTool(nx, ny) {
+  if (state.tool === 'orbit' || !city) return;
+  ndc.set(nx, ny);
   raycaster.setFromCamera(ndc, camera);
   const hit = pick(raycaster.ray);
   if (state.tool === 'edit') { select(hit && hit.building); return; }
   if (!hit) return;
   if (state.tool === 'strike') {
     const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
-    const from = camera.position.clone().addScaledVector(right, 18).add(new THREE.Vector3(0, 30, 0));
+    const from = fps.active // launcher on the shoulder vs. offscreen artillery
+      ? camera.position.clone().addScaledVector(right, 0.45).add(new THREE.Vector3(0, -0.3, 0)).addScaledVector(raycaster.ray.direction, 0.8)
+      : camera.position.clone().addScaledVector(right, 18).add(new THREE.Vector3(0, 30, 0));
     effects.launchMissile(from, hit.point, (p) => demolition.strike(p, { radius: 11, power: state.power }));
   } else if (state.tool === 'implode' && hit.building) demolition.implode(hit.building);
-});
+}
 
 function pick(ray) {
   let best = city.raycastBuildings(ray);
@@ -274,7 +325,7 @@ addEventListener('resize', onResize);
 
 /* ---------- frame loop ---------- */
 const clock = new THREE.Clock();
-const fwd = new THREE.Vector3(), rgt = new THREE.Vector3(), shakeOff = new THREE.Vector3();
+const fwd = new THREE.Vector3(), rgt = new THREE.Vector3(), shakeOff = new THREE.Vector3(), fpsFocus = new THREE.Vector3(), fpsFwd = new THREE.Vector3();
 let fpsAcc = 0, fpsN = 0, fps = 0, statT = 0, mapT = 0;
 
 function frame() {
@@ -282,18 +333,25 @@ function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   renderer.info.reset();
 
-  if (keys.size) { // WASD pan
+  if (fps.active) fps.update(dt, keys);
+  else if (keys.size) { // WASD pan
     camera.getWorldDirection(fwd); fwd.y = 0; fwd.normalize(); rgt.crossVectors(fwd, camera.up).normalize();
     const sp = Math.max(20, camera.position.distanceTo(controls.target) * 0.9) * dt, mv = new THREE.Vector3();
     if (keys.has('KeyW')) mv.add(fwd); if (keys.has('KeyS')) mv.sub(fwd); if (keys.has('KeyD')) mv.add(rgt); if (keys.has('KeyA')) mv.sub(rgt);
     mv.multiplyScalar(sp); camera.position.add(mv); controls.target.add(mv);
   }
-  controls.update();
+  if (!fps.active) controls.update();
   if (state.cycle) { const t = (lighting.params.time + dt * 0.4) % 24; $('time').value = t; $('timeVal').textContent = fmtTime(t); lighting.setTime(t); }
 
-  const camDist = camera.position.distanceTo(controls.target);
-  lighting.params.shadowRadius = THREE.MathUtils.clamp(camDist * 1.1, 90, 520);
-  lighting.setFocus(controls.target);
+  if (fps.active) { // tight, sharp shadow box ahead of the player
+    lighting.params.shadowRadius = 75;
+    lighting.setFocus(fpsFocus.copy(camera.position).addScaledVector(fps.forward(fpsFwd).setY(0).normalize(), 30).setY(0));
+    $('fpsHud').textContent = `${(fps.speed * 3.6).toFixed(0)} km/h · tool: ${state.tool} · F exit`;
+  } else {
+    const camDist = camera.position.distanceTo(controls.target);
+    lighting.params.shadowRadius = THREE.MathUtils.clamp(camDist * 1.1, 90, 520);
+    lighting.setFocus(controls.target);
+  }
   if (city) { city.update(camera, dt); demolition.update(dt); }
   effects.update(dt, demolition ? demolition.world.gravity : 13);
 
@@ -334,4 +392,4 @@ function frame() {
 })();
 
 // debug / automation handle
-window.__city = { get city() { return city; }, get demolition() { return demolition; }, lighting, camera, controls, lib, mats, params, setTool, select, buildCity, syncParamUI, pick: (r) => pick(r) };
+window.__city = { fps, toggleWalk, keys, get city() { return city; }, get demolition() { return demolition; }, lighting, camera, controls, lib, mats, params, setTool, select, buildCity, syncParamUI, pick: (r) => pick(r) };

@@ -33,6 +33,8 @@
           <label><input type="radio" name="tool" value="strike" /> صاروخ</label>
           <label><input type="radio" name="tool" value="implode" /> تفجير متحكَّم</label>
         </div>
+        <div class="row"><button id="walkBtn" class="accent">🚶 وضع المشي FPS (F)</button></div>
+        <label>حساسية الفأرة <input id="sens" type="range" min="0.0008" max="0.005" step="0.0001" value="0.0022" /></label>
         <label>قوة الانفجار <input id="power" type="range" min="0.5" max="2.2" step="0.05" value="1" /></label>
         <div id="inspector" class="inspector hidden">
           <b id="inspTitle">مبنى</b>
@@ -96,6 +98,16 @@
     </div>
   </aside>
   <div id="toolHint"></div>
+  <div id="crosshair" class="hidden"></div>
+  <div id="fpsHud" class="hidden"></div>
+  <div id="fpsOverlay" class="hidden">
+    <div class="box">
+      <b>وضع المشي — FPS</b>
+      <p>انقر للمتابعة</p>
+      <small>W A S D حركة · Shift ركض · Space قفز · C انحناء<br />نقرة يسار = الأداة الحالية (2 تعديل · 3 صاروخ · 4 تفجير) · F أو الزر للخروج</small>
+      <div class="row" style="justify-content:center"><button id="walkExit">خروج من وضع المشي</button></div>
+    </div>
+  </div>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
