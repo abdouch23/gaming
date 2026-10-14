@@ -154,6 +154,13 @@ export class AudioFX {
     const g = c.createGain(); g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(vol, t0 + 0.4); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
     src.connect(f).connect(g).connect(c.destination); src.start(t0); src.stop(t0 + dur + 0.1);
   }
+  footstep(k = 1) {
+    if (!this._ensure()) return;
+    const c = this.ctx, t0 = c.currentTime, src = c.createBufferSource(); src.buffer = this._noise;
+    const f = c.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 500 + Math.random() * 400; f.Q.value = 0.9;
+    const g = c.createGain(); g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.05 * k, t0 + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.11);
+    src.connect(f).connect(g).connect(c.destination); src.start(t0, Math.random() * 2); src.stop(t0 + 0.12);
+  }
   whistle(dur) {
     if (!this._ensure()) return;
     const c = this.ctx, t0 = c.currentTime, o = c.createOscillator(), g = c.createGain();
