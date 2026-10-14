@@ -64,7 +64,7 @@ const FRAG_DECL = /* glsl */`
 precision highp sampler2DArray;
 uniform sampler2DArray uAlb, uNrm; uniform sampler2D uGrime;
 uniform float uTile[16], uMetal[16], uAnti[16];
-uniform float uWeather, uNormalStr, uNight;
+uniform float uWeather, uNormalStr, uNight, uWet, uDetail;
 flat varying float cLayer; flat varying vec4 cFacade; flat varying float cSeed;
 varying vec2 cUv; varying vec3 cTint; varying vec3 cWP; varying vec3 cWN;
 ` + COMMON_GLSL;
@@ -74,13 +74,23 @@ float wRough, wMetal, wAO; vec3 wN, wEmis = vec3(0.);
 {
   int Li = int(cLayer + .5); float Lf = float(Li);
   vec2 tuv = cUv / uTile[Li];
-  vec3 N = normalize(cWN); float vert = 1. - abs(N.y);
+  vec3 N = normalize(cWN); float vert = 1. - abs(N.y), hor = smoothstep(.7, .95, N.y);
+  float camD = length(cameraPosition - cWP);
   vec4 gM = texture2D(uGrime, cWP.xz * (1. / 83.) + cWP.y * (1. / 131.));
   vec4 A = texture(uAlb, vec3(tuv, Lf)), Nn = texture(uNrm, vec3(tuv, Lf));
   if (uAnti[Li] > .5) { // anti-tiling: blend a rotated, rescaled second sample through a macro mask
     vec2 t2 = mat2(.8, -.6, .6, .8) * tuv * .63 + vec2(.37, .71);
     float b = smoothstep(.38, .62, gM.g);
     A = mix(A, texture(uAlb, vec3(t2, Lf)), b); Nn = mix(Nn, texture(uNrm, vec3(t2, Lf)), b);
+  }
+  // close-range detail: same layer at ~4.4x frequency, faded out with distance
+  float dF = (1. - smoothstep(6., 34., camD)) * uDetail;
+  if (dF > .01) {
+    vec2 duv = mat2(.6, .8, -.8, .6) * tuv * 4.37 + .5;
+    vec4 Ad = texture(uAlb, vec3(duv, Lf)), Nd = texture(uNrm, vec3(duv, Lf));
+    A.rgb *= mix(1., .72 + .56 * Ad.a, dF * .55);
+    Nn.rg = mix(Nn.rg, clamp(Nn.rg + (Nd.rg - .5) * .7, 0., 1.), dF);
+    Nn.a *= mix(1., .8 + .2 * Nd.a, dF);
   }
   vec3 alb = A.rgb * cTint * (.9 + .2 * gM.a);
   float hgt = A.a; wRough = Nn.b; wAO = Nn.a; wMetal = uMetal[Li];
@@ -92,14 +102,77 @@ float wRough, wMetal, wAO; vec3 wN, wEmis = vec3(0.);
   vec4 gB = texture2D(uGrime, (vert > .5 ? fuv : cWP.xz) / 7.3);
   float streak = gS.r * vert * smoothstep(1., 8., cWP.y);
   float splash = (1. - smoothstep(.2, 2.6, cWP.y)) * vert * (.45 + .55 * gB.g);
-  float roofDirt = (1. - vert) * smoothstep(.45, .8, gB.g) * .7;
+  float roofDirt = (1. - vert) * smoothstep(.45, .8, gB.g) * .7 * step(1., cWP.y);
   float cav = (1. - wAO) * 1.3;
-  float dirt = clamp((streak * .85 + splash + roofDirt + cav * .45) * uWeather, 0., 1.);
+  float dirt = clamp((streak * .85 + splash + roofDirt + cav * (Li == 9 ? .12 : .45)) * uWeather, 0., 1.); // 9 = asphalt
   dirt = clamp(dirt * (1.2 - hgt * .45), 0., 1.); // settles into low areas first
   alb = mix(alb, alb * vec3(.5, .45, .38), dirt * .8);
   wRough = clamp(wRough + dirt * .08 - streak * uWeather * .12, .04, 1.);
   float moss = (1. - smoothstep(0., 1.4, cWP.y)) * vert * smoothstep(.55, .78, gB.b) * uWeather * step(Lf, 2.5);
   alb = mix(alb, vec3(.12, .16, .07), moss * .6);
+  float puddleBias = 0.;
+
+  // ---- road surface: markings, crosswalks, stop lines, tyre tracks, oil, gutter grime
+  if (cFacade.w < -.5) {
+    int fl = int(-cFacade.w - 1. + .5);
+    bool ave = (fl & 1) != 0, xa = (fl & 2) != 0, xb = (fl & 4) != 0;
+    float u = cUv.x, v = cUv.y, len = cFacade.x, hw = cFacade.y * .5, lanes = cFacade.z;
+    float park = cFacade.y >= 11. ? 2.5 : 0., laneW = (hw - park) / lanes, au = abs(u);
+    float aa = max(fwidth(u), fwidth(v)) * .75 + .004;
+    float dStart = v, dEnd = len - v;
+    bool zoneA = xa && dStart < 5.2, zoneB = xb && dEnd < 5.2;
+    // tyre tracks & oil drip line per driving lane
+    if (au < hw - park) {
+      float ll = mod(au, laneW) - laneW * .5;
+      float tt = exp(-pow((abs(ll) - .85) / .33, 2.));
+      float oil = exp(-pow(ll / .45, 2.)) * smoothstep(.35, .75, gB.g);
+      alb *= (1. - .16 * tt) * (1. - .28 * oil);
+      wRough = clamp(wRough - .14 * tt - .22 * oil, .05, 1.);
+    } else alb *= .95 + .05 * gB.b; // parking lane: patchier
+    float gut = smoothstep(hw - .9, hw - .1, au);
+    alb = mix(alb, alb * vec3(.62, .58, .52), gut * .7); wRough = mix(wRough, .95, gut * .4); puddleBias += gut * .3;
+    // paint
+    float paintW = 0., paintY = 0.;
+    float band12 = 1. - smoothstep(.06 - aa, .06 + aa, abs(au - .2));
+    if (!zoneA && !zoneB) {
+      if (ave) paintY = max(paintY, band12);
+      else { float dash = step(fract(v / 9.), .38); paintY = max(paintY, (1. - smoothstep(.07 - aa, .07 + aa, au)) * dash); }
+      for (int k = 1; k < 4; k++) {
+        if (float(k) >= lanes) break;
+        float x = float(k) * laneW, dash = step(fract(v / 9. + .3), .33);
+        paintW = max(paintW, (1. - smoothstep(.065 - aa, .065 + aa, abs(au - x))) * dash);
+      }
+      if (park > 0.) paintW = max(paintW, 1. - smoothstep(.06 - aa, .06 + aa, abs(au - (hw - park))));
+    }
+    for (int e = 0; e < 2; e++) {
+      bool on = e == 0 ? xa : xb; if (!on) continue;
+      float d = e == 0 ? dStart : dEnd;
+      // zebra crossing (bars parallel to traffic)
+      float zebra = step(fract(u / 1.1 + .25), .5) * step(au, hw - .5);
+      float inZ = smoothstep(.8 - aa, .8 + aa, d) * (1. - smoothstep(3.9 - aa, 3.9 + aa, d));
+      paintW = max(paintW, zebra * inZ);
+      // stop line on the approaching side (right-hand traffic)
+      bool approach = e == 1 ? u > 0. : u < 0.;
+      float sl = (1. - smoothstep(.22 - aa, .22 + aa, abs(d - 4.75))) * step(.1, au) * step(au, hw - park);
+      if (approach) paintW = max(paintW, sl);
+    }
+    float wear = smoothstep(.15, .55, gB.b * .7 + texture2D(uGrime, vec2(u, v) / 2.1).g * .6);
+    float paint = max(paintW, paintY) * wear;
+    vec3 pc = paintY > paintW ? vec3(.8, .56, .1) : vec3(.82, .82, .78);
+    alb = mix(alb, pc * (.85 + .15 * gB.a), paint);
+    wRough = mix(wRough, .5, paint); wN = normalize(mix(wN, vec3(0., 0., 1.), paint * .7));
+  }
+
+  // ---- wetness and puddles (rain)
+  if (uWet > .001) {
+    float wetH = uWet * hor;
+    alb *= mix(1., .58, wetH);
+    wRough = mix(wRough, wRough * .35, wetH);
+    float pm = gB.g * .55 + (1. - hgt) * .3 + puddleBias + texture2D(uGrime, cWP.xz / 31.).g * .3;
+    float puddle = smoothstep(.9 - uWet * .42, .94 - uWet * .42, pm) * hor * step(cWP.y, .5);
+    alb *= mix(1., .35, puddle); wRough = mix(wRough, .02, puddle); wN = normalize(mix(wN, vec3(0., 0., 1.), puddle)); wAO = mix(wAO, 1., puddle);
+    float wetV = uWet * vert * (.35 + .65 * gS.r); alb *= mix(1., .75, wetV); wRough = mix(wRough, wRough * .6, wetV);
+  }
 
   // ---- procedural windows for LOD and debris facades (cFacade.w > 0)
   if (cFacade.w > .5 && vert > .9) {
@@ -131,7 +204,7 @@ export class CityMaterials {
     this.u = {
       uAlb: { value: null }, uNrm: { value: null }, uGrime: { value: null },
       uTile: { value: pad16((d) => d.meters) }, uMetal: { value: pad16((d) => d.metal) }, uAnti: { value: pad16((d) => d.anti) },
-      uWeather: { value: 0.7 }, uNormalStr: { value: 1.0 }, uNight: lighting.uniforms.uNight,
+      uWeather: { value: 0.7 }, uNormalStr: { value: 1.0 }, uNight: lighting.uniforms.uNight, uWet: { value: 0 }, uDetail: { value: 1 },
     };
     lib.onChange((l) => { this.u.uAlb.value = l.alb; this.u.uNrm.value = l.nrm; this.u.uGrime.value = l.grime; });
     this.world = this._world();
@@ -154,7 +227,7 @@ export class CityMaterials {
           reflectedLight.directDiffuse *= mix(1., wAO, .35);`);
       this.lighting.injectSAO(s);
     };
-    m.customProgramCacheKey = () => 'city-world-v1';
+    m.customProgramCacheKey = () => 'city-world-v2';
     return m;
   }
 
@@ -176,7 +249,7 @@ export class CityMaterials {
         .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = gMirror * .85;')
         .replace('#include <emissivemap_fragment>', 'totalEmissiveRadiance += gEmis;');
     };
-    m.customProgramCacheKey = () => 'city-glass-v1';
+    m.customProgramCacheKey = () => 'city-glass-v2';
     return m;
   }
 }

@@ -2,10 +2,11 @@
 // time budget), instant building removal (index ranges collapse), ray picking and static colliders.
 import * as THREE from 'three';
 import { GeoBuilder } from './GeoBuilder.js';
-import { buildSimple, buildDetailed } from './BuildingGenerator.js';
-import { buildGround, buildFarGround, buildMarkings, StreetProps } from './Streets.js';
+import { buildSimple, buildDetailed, makeBuilding } from './BuildingGenerator.js';
+import { buildGround, buildFarGround, StreetProps } from './Streets.js';
+import { Trees } from './Trees.js';
 
-const CHUNK = 2; // blocks per chunk side
+const CHUNK_M = 190; // chunk cell size (metres)
 
 export class City {
   constructor(layout, materials, lib, lighting) {
@@ -18,17 +19,21 @@ export class City {
     const ground = new THREE.Mesh(buildGround(layout), materials.world);
     ground.receiveShadow = true; this.group.add(ground);
     this.far = new THREE.Mesh(buildFarGround(), materials.world); this.far.receiveShadow = true; // outside the AO level
-    this.markings = buildMarkings(layout, lib); this.group.add(this.markings);
     this.props = new StreetProps(layout, lighting); this.group.add(this.props.group);
-    lighting.patch(this.props.group); lighting.patch(this.markings);
+    lighting.patch(this.props.group);
+    this.trees = new Trees(layout, lighting); this.group.add(this.trees.group);
+    this.lighting = lighting;
 
-    // chunks
-    const nx = Math.ceil(layout.blocksX / CHUNK), nz = Math.ceil(layout.blocksZ / CHUNK);
+    // chunks: spatial cells over block centroids
+    const cells = new Map();
+    for (const b of layout.blocks) {
+      if (!b.buildings.length) continue;
+      const k = Math.floor(b.cx / CHUNK_M) + ',' + Math.floor(b.cz / CHUNK_M);
+      if (!cells.has(k)) cells.set(k, []); cells.get(k).push(b);
+    }
     this.chunks = [];
-    for (let ci = 0; ci < nx; ci++) for (let cj = 0; cj < nz; cj++) {
-      const blocks = layout.blocks.filter((b) => Math.floor(b.i / CHUNK) === ci && Math.floor(b.j / CHUNK) === cj);
+    for (const blocks of cells.values()) {
       const buildings = blocks.flatMap((b) => b.buildings);
-      if (!buildings.length) continue;
       const box = new THREE.Box3(); buildings.forEach((b) => box.union(b.box));
       const ch = { buildings, box, simple: null, detail: null, job: null, dist: 0 };
       buildings.forEach((b) => (b.chunk = ch));
@@ -37,7 +42,8 @@ export class City {
     }
     this.bounds = new THREE.Box3();
     layout.buildings.forEach((b) => this.bounds.union(b.box));
-    this.bounds.expandByPoint(new THREE.Vector3(-layout.totX / 2, 0, -layout.totZ / 2)).expandByPoint(new THREE.Vector3(layout.totX / 2, 0, layout.totZ / 2));
+    const B = layout.bounds, m = layout.maxW;
+    this.bounds.expandByPoint(new THREE.Vector3(B.minX - m, 0, B.minZ - m)).expandByPoint(new THREE.Vector3(B.maxX + m, 1, B.maxZ + m));
     this._v = new THREE.Vector3();
   }
 
@@ -92,6 +98,7 @@ export class City {
     }
     this.stats.detailChunks = n; this.stats.building = this.chunks.filter((c) => c.job).length;
     this.props.update(dt);
+    this.trees.update(camera, dt);
   }
 
   /** remove a building instantly by collapsing its index ranges (no rebuild hitch) */
@@ -107,6 +114,29 @@ export class City {
       const job = ch.job, k = ch.buildings.indexOf(b);
       if (k < job.k) job.G.i.fill(0, b.rDetail[0], b.rDetail[0] + b.rDetail[1]), job.Gg.i.fill(0, b.rGlass[0], b.rGlass[0] + b.rGlass[1]);
     }
+  }
+
+  /** rebuild one building with new options (style, floors, seed) — used by the editor */
+  replaceBuilding(old, changes) {
+    const o = { ...old.opts, ...changes };
+    if (changes.style && !changes.floors) delete o.floors;
+    const b = makeBuilding(o);
+    b.block = old.block; b.chunk = old.chunk;
+    const swap = (arr) => { const i = arr.indexOf(old); if (i >= 0) arr[i] = b; };
+    swap(this.layout.buildings); swap(old.block.buildings); swap(old.chunk.buildings);
+    this._refreshChunk(old.chunk);
+    return b;
+  }
+  removeBuilding(b) {
+    b.demolished = true; b.removed = true;
+    this._refreshChunk(b.chunk);
+  }
+  _refreshChunk(ch) {
+    ch.box.makeEmpty(); ch.buildings.forEach((x) => ch.box.union(x.box));
+    this._buildSimple(ch);
+    ch.job = null; this._disposeDetail(ch); // LOD0 re-streams next frame
+    this.bounds.union(ch.box);
+    this.lighting.setBounds(this.bounds); this.lighting.rebuild();
   }
 
   /** ray against intact building volumes (tiers + roof box), returns {building, point, normal, distance} */
@@ -133,8 +163,11 @@ export class City {
     for (const b of this.layout.buildings) {
       if (b.demolished) continue;
       const bx = b.box; if (x < bx.min.x - r || x > bx.max.x + r || z < bx.min.z - r || z > bx.max.z + r) continue;
-      if (!b.tierBoxes) b.tierBoxes = b.tiers.map((t) => new THREE.Box3().setFromPoints([
-        new THREE.Vector3(t.ox - t.w / 2, t.y0, t.oz - t.d / 2).applyMatrix4(b.matrix), new THREE.Vector3(t.ox + t.w / 2, t.y1, t.oz + t.d / 2).applyMatrix4(b.matrix)]));
+      if (!b.tierBoxes) b.tierBoxes = b.tiers.map((t) => { // world AABB of the rotated tier
+        const pts = [];
+        for (const sx of [-1, 1]) for (const sz of [-1, 1]) for (const y of [t.y0, t.y1]) pts.push(new THREE.Vector3(t.ox + sx * t.w / 2, y, t.oz + sz * t.d / 2).applyMatrix4(b.matrix));
+        return new THREE.Box3().setFromPoints(pts);
+      });
       for (const tb of b.tierBoxes) out.push(tb);
     }
     return out;
@@ -145,7 +178,8 @@ export class City {
   }
 
   dispose() {
-    this.group.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+    this.group.traverse((o) => { if (o.geometry && !o.parent?.name?.includes('trees')) o.geometry.dispose(); });
+    this.trees.dispose();
     this.far.geometry.dispose();
   }
 }

@@ -73,6 +73,29 @@ export class GeoBuilder {
     for (let k = 1; k < pts.length - 1; k++) this._idx(base, base + k, base + k + 1);
   }
 
+  /** horizontal polygon (any simple shape) at height y, facing up; pts = [[x, z], ...] */
+  capXZ(pts, y, uvFn = (x, z) => [x, -z]) {
+    const tris = THREE.ShapeUtils.triangulateShape(pts.map((q) => new THREE.Vector2(q[0], q[1])), []);
+    const base = this.vertexCount;
+    for (const q of pts) { const uv = uvFn(q[0], q[1]); this.vert(q[0], y, q[1], 0, 1, 0, uv[0], uv[1]); }
+    for (const [a, b, c] of tris) {
+      const A = pts[a], B = pts[b], C = pts[c];
+      const up = (B[1] - A[1]) * (C[0] - A[0]) - (B[0] - A[0]) * (C[1] - A[1]) > 0;
+      if (up) this._idx(base + a, base + b, base + c); else this._idx(base + a, base + c, base + b);
+    }
+  }
+
+  /** vertical walls along a positive-area outline, facing outward, from y0 to y1 */
+  wallsXZ(pts, y0, y1, closed = true) {
+    let acc = 0;
+    const n = pts.length, m = closed ? n : n - 1;
+    for (let i = 0; i < m; i++) {
+      const a = pts[i], b = pts[(i + 1) % n], L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      this.quad([b[0], y0, b[1]], [a[0], y0, a[1]], [a[0], y1, a[1]], [b[0], y1, b[1]], [acc + L, y0, acc, y0, acc, y1, acc + L, y1]);
+      acc += L;
+    }
+  }
+
   /** wall rectangle in a facade frame: origin o, tangent t (unit, horizontal), normal nrm; u in [u0,u1], y in [y0,y1], offset along normal */
   facadeRect(F, u0, u1, y0, y1, off = 0, uScale = 1) {
     const ox = F.o[0] + F.n[0] * off, oz = F.o[2] + F.n[2] * off;

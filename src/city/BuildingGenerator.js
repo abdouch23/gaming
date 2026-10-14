@@ -32,12 +32,13 @@ export function makeBuilding(o) {
   const S = STYLES[o.style], r = mulberry32(o.seed);
   const fh = r.range(...S.fh), gh = r.range(...S.gh), bay = r.range(...S.bay);
   let floors = Math.round(r.range(S.floors[0], S.floors[1]) * (o.heightScale || 1));
-  floors = Math.max(S.floors[0] - 1, Math.min(floors, S.floors[1] + 8));
+  floors = Math.max(Math.max(1, S.floors[0] - 1), Math.min(floors, Math.round(S.floors[1] * 1.6) + 4));
+  if (o.floors) floors = Math.max(1, Math.round(o.floors));
   const yAt = (f) => (f <= 0 ? 0 : gh + (f - 1) * fh);
   const H = yAt(floors);
   const w = o.w, d = o.d;
   const tiers = [{ w, d, ox: 0, oz: 0, y0: 0, y1: H }];
-  if (o.style === 'tower' && floors > 20) { // setbacks
+  if (o.style === 'tower' && floors > 20 && Math.min(w, d) > 22) { // setbacks
     const f1 = Math.round(floors * r.range(0.35, 0.5)), f2 = Math.round(floors * r.range(0.72, 0.85));
     const i1 = r.range(1.8, 3.5), i2 = i1 + r.range(1.8, 3.5);
     tiers.length = 0;
@@ -53,7 +54,7 @@ export function makeBuilding(o) {
   else if (o.style === 'office') { const k = r.range(0.8, 1.15); tint = [k, k, k * r.range(0.96, 1.04)]; }
   const roofH = S.roofType === 'mansard' ? fh * 1.25 : S.roofType === 'hip' ? Math.min(w, d) * 0.32 : 0;
   const b = {
-    id: o.id, seed: o.seed, style: o.style, cx: o.cx, cz: o.cz, rot: o.rot, w, d,
+    id: o.id, seed: o.seed, style: o.style, cx: o.cx, cz: o.cz, angle: o.angle || 0, w, d, opts: { ...o },
     floors, fh, gh, bay, tiers, H, roofType: S.roofType, roofH,
     wall: S.wall, base: S.base, roofLayer: S.roof, win: S.win, tint,
     glassTint: o.style === 'tower' ? r.pick(GLASS_TINTS) : [0.55, 0.62, 0.66],
@@ -64,7 +65,7 @@ export function makeBuilding(o) {
     seedF: ((o.id * 7.31) % 50),
     demolished: false,
   };
-  b.matrix = new THREE.Matrix4().makeRotationY(o.rot * Math.PI / 2).setPosition(o.cx, 0, o.cz);
+  b.matrix = new THREE.Matrix4().makeRotationY(b.angle).setPosition(o.cx, 0, o.cz);
   b.inverse = b.matrix.clone().invert();
   const box = new THREE.Box3();
   for (const t of tiers) for (const sx of [-1, 1]) for (const sz of [-1, 1]) box.expandByPoint(new THREE.Vector3(t.ox + sx * t.w / 2, t.y1, t.oz + sz * t.d / 2).applyMatrix4(b.matrix));

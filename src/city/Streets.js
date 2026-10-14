@@ -1,49 +1,76 @@
-// Streets: asphalt, raised sidewalks with granite curbs, park lawns, worn road markings (instanced),
-// street lamps with night light pools, trees, parked + moving cars (instanced).
+// Street geometry (asphalt road strips with road-space UVs, intersections, granite curbs, sidewalks,
+// lawns, park paths) plus lamps and cars. Road markings, tyre tracks and puddles are painted in the
+// city shader from the strip UVs (see CityMaterials), so they stay crisp at any distance.
 import * as THREE from 'three';
-import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GeoBuilder } from './GeoBuilder.js';
 import { L } from '../materials/layers.js';
-import { ROAD } from './CityLayout.js';
+import { CURB_H } from './CityLayout.js';
 import { mulberry32 } from '../core/rng.js';
+import * as G2 from '../core/geom2d.js';
 
 const NOFAC = [0, 0, 0, 0];
-
-function roundedRect(x0, z0, x1, z1, rc, seg = 5) {
-  const pts = [], c = [[x1 - rc, z1 - rc, 0], [x1 - rc, z0 + rc, -Math.PI / 2], [x0 + rc, z0 + rc, Math.PI], [x0 + rc, z1 - rc, Math.PI / 2]];
-  for (const [cx, cz, a0] of c) for (let k = 0; k <= seg; k++) { const a = a0 + Math.PI / 2 - (k / seg) * (Math.PI / 2); pts.push([cx + Math.cos(a) * rc, cz + Math.sin(a) * rc]); }
-  return pts; // clockwise in x/z  => counter-clockwise seen from above (+y)
-}
+const world = (x, z) => [x, -z];
 
 export function buildGround(layout) {
-  const G = new GeoBuilder(1 << 16), m = 30;
-  const X = layout.totX / 2 + m, Z = layout.totZ / 2 + m;
-  G.set(L.ASPHALT, [1, 1, 1], NOFAC);
-  G.quad([-X, 0, Z], [X, 0, Z], [X, 0, -Z], [-X, 0, -Z], [-X, -Z, X, -Z, X, Z, -X, Z]);
-  const h = ROAD.CURB_H;
+  const G = new GeoBuilder(1 << 17), h = CURB_H;
+  // fallback asphalt under the whole network (only visible through tiny gaps)
+  G.set(L.ASPHALT, [0.8, 0.8, 0.82], NOFAC);
+  G.capXZ(G2.inset(layout.hull, -layout.maxW / 2 - 0.5), -0.06, world);
+
+  // road strips: u = across (m, + = right of travel direction), v = along (m from the strip start)
+  for (const ch of layout.chains) {
+    const len = ch.s1 - ch.s0; if (len < 1) continue;
+    const pl = ch.pl, hw = ch.w / 2;
+    const pts = [{ p: pl.at(ch.s0), s: ch.s0 }, ...pl.between(ch.s0, ch.s1).map((v) => ({ p: v.p, s: v.s })), { p: pl.at(ch.s1), s: ch.s1 }];
+    const R = [], Lf = [];
+    pts.forEach((q, i) => {
+      let nr;
+      if (i === 0 || i === pts.length - 1) nr = G2.inward(pl.tangent(Math.min(q.s, pl.length - 1e-3)));
+      else {
+        const t1 = G2.norm(G2.sub(q.p, pts[i - 1].p)), t2 = G2.norm(G2.sub(pts[i + 1].p, q.p)), n1 = G2.inward(t1);
+        nr = G2.norm(G2.add(n1, G2.inward(t2))); nr = G2.mul(nr, 1 / Math.max(0.5, G2.dot(nr, n1))); // mitre
+      }
+      R.push(G2.add(q.p, G2.mul(nr, hw))); Lf.push(G2.sub(q.p, G2.mul(nr, hw)));
+    });
+    const flags = (ch.avenue ? 1 : 0) + (ch.cross.a ? 2 : 0) + (ch.cross.b ? 4 : 0);
+    G.set(L.ASPHALT, [1, 1, 1], [len, ch.w, ch.lanes, -1 - flags], (ch.id * 0.618) % 1);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const v0 = pts[i].s - ch.s0, v1 = pts[i + 1].s - ch.s0;
+      G.quad([R[i][0], 0, R[i][1]], [R[i + 1][0], 0, R[i + 1][1]], [Lf[i + 1][0], 0, Lf[i + 1][1]], [Lf[i][0], 0, Lf[i][1]], [hw, v0, hw, v1, -hw, v1, -hw, v0]);
+    }
+  }
+  G.set(L.ASPHALT, [0.86, 0.86, 0.88], NOFAC);
+  for (const it of layout.intersections) if (it.poly.length >= 3) G.capXZ(it.poly, 0, world);
+
   for (const b of layout.blocks) {
-    const outer = roundedRect(b.x0, b.z0, b.x1, b.z1, 4.5), inner = roundedRect(b.x0 + 0.3, b.z0 + 0.3, b.x1 - 0.3, b.z1 - 0.3, 4.2);
-    // curb faces
     G.set(L.CURB, [1, 1, 1], NOFAC);
+    G.wallsXZ(b.curb, -0.06, h);
+    // granite curb top band (curb and inner outlines share vertex indices)
     let acc = 0;
-    for (let k = 0; k < outer.length; k++) {
-      const a = outer[k], c = outer[(k + 1) % outer.length], len = Math.hypot(c[0] - a[0], c[1] - a[1]);
-      G.quad([a[0], 0, a[1]], [c[0], 0, c[1]], [c[0], h, c[1]], [a[0], h, a[1]], [acc, 0, acc + len, 0, acc + len, h, acc, h]);
-      // granite top band
-      const ia = inner[k], ic = inner[(k + 1) % inner.length];
-      G.quad([a[0], h, a[1]], [c[0], h, c[1]], [ic[0], h, ic[1]], [ia[0], h, ia[1]], [acc, 0, acc + len, 0, acc + len, 0.3, acc, 0.3]);
+    for (let i = 0; i < b.curb.length; i++) {
+      const a = b.curb[i], c = b.curb[(i + 1) % b.curb.length], ia = b.inner[i], ic = b.inner[(i + 1) % b.inner.length], len = G2.dist(a, c);
+      G.quad([c[0], h, c[1]], [a[0], h, a[1]], [ia[0], h, ia[1]], [ic[0], h, ic[1]], [acc + len, 0, acc, 0, acc, 0.3, acc + len, 0.3]);
       acc += len;
     }
     G.set(L.PAVERS, [1, 1, 1], NOFAC);
-    G.poly(inner.map((p) => [p[0], h, p[1]]), (q) => [q[0], -q[2]], [0, 1, 0]);
-    // lawn / courtyard
-    const lawn = b.park || b.district === 'residential' || b.district === 'suburb';
-    if (lawn) {
-      const sw = ROAD.SIDEWALK, lx0 = b.x0 + sw, lx1 = b.x1 - sw, lz0 = b.z0 + sw, lz1 = b.z1 - sw, lh = h + 0.1;
-      G.set(L.CURB, [0.9, 0.9, 0.9], NOFAC);
-      G.box((lx0 + lx1) / 2, lh / 2 + h / 2, (lz0 + lz1) / 2, lx1 - lx0, lh - h, lz1 - lz0, ['py', 'ny']);
-      G.set(L.GRASS, [1, 1, 1], NOFAC);
-      G.quad([lx0, lh, lz1], [lx1, lh, lz1], [lx1, lh, lz0], [lx0, lh, lz0], [lx0, -lz1, lx1, -lz1, lx1, -lz0, lx0, -lz0]);
+    G.capXZ(b.inner, h, world);
+    if (b.lawn) {
+      const lh = h + 0.1;
+      G.set(L.CURB, [0.88, 0.88, 0.88], NOFAC); G.wallsXZ(b.lot, h, lh);
+      G.set(L.GRASS, [1, 1, 1], NOFAC); G.capXZ(b.lot, lh, world);
+      for (const pa of b.paths) {
+        G.set(b.plaza ? L.PAVERS : L.GRAVEL, b.plaza ? [1.05, 1.02, 0.98] : [1.15, 1.08, 0.95], NOFAC);
+        if (pa.ring) {
+          const ring = [], inr = [];
+          for (let k = 0; k < 48; k++) { const a = (k / 48) * Math.PI * 2; ring.push([pa.c[0] + Math.cos(a) * (pa.r + 3), pa.c[1] + Math.sin(a) * (pa.r + 3)]); inr.push([pa.c[0] + Math.cos(a) * pa.r, pa.c[1] + Math.sin(a) * pa.r]); }
+          for (let k = 0; k < 48; k++) { const a = ring[k], c = ring[(k + 1) % 48], ia = inr[k], ic = inr[(k + 1) % 48]; G.quad([c[0], lh + 0.02, c[1]], [a[0], lh + 0.02, a[1]], [ia[0], lh + 0.02, ia[1]], [ic[0], lh + 0.02, ic[1]], [c[0], -c[1], a[0], -a[1], ia[0], -ia[1], ic[0], -ic[1]]); }
+          continue;
+        }
+        const d = G2.norm(G2.sub(pa.b, pa.a)), n = G2.mul(G2.inward(d), pa.w / 2);
+        const q = [G2.add(pa.a, n), G2.sub(pa.a, n), G2.sub(pa.b, n), G2.add(pa.b, n)];
+        G.capXZ(q, lh + 0.015, world);
+      }
     }
   }
   return G.build();
@@ -52,76 +79,43 @@ export function buildGround(layout) {
 export function buildFarGround() {
   const G = new GeoBuilder(16);
   G.set(L.GRASS, [0.85, 0.9, 0.8], NOFAC);
-  const S = 4000;
-  G.quad([-S, -0.03, S], [S, -0.03, S], [S, -0.03, -S], [-S, -0.03, -S], [-S, -S, S, -S, S, S, -S, S]);
+  const S = 5000;
+  G.quad([-S, -0.09, S], [S, -0.09, S], [S, -0.09, -S], [-S, -0.09, -S], [-S, -S, S, -S, S, S, -S, S]);
   return G.build();
 }
 
-/* ---------- markings ---------- */
-export function buildMarkings(layout, lib) {
-  const geo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.65, alphaTest: 0.32, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
-  lib.onChange((l) => { mat.alphaMap = l.grime; mat.needsUpdate = true; });
-  mat.onBeforeCompile = (s) => { // world-space wear so every dash is worn differently
-    s.vertexShader = s.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
-      #ifdef USE_ALPHAMAP
-      vAlphaMapUv = (modelMatrix * instanceMatrix * vec4(position, 1.)).xz * .09;
-      #endif`);
-  };
-  const n = layout.marks.length, im = new THREE.InstancedMesh(geo, mat, n);
-  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
-  const white = new THREE.Color(0.9, 0.9, 0.86), yellow = new THREE.Color(0.95, 0.68, 0.1);
-  layout.marks.forEach((mk, i) => {
-    q.setFromAxisAngle(up, mk.ry); s.set(mk.wid, 1, mk.len); p.set(mk.x, 0.012, mk.z);
-    im.setMatrixAt(i, m4.compose(p, q, s)); im.setColorAt(i, mk.yellow ? yellow : white);
-  });
-  im.receiveShadow = true; im.userData.noAO = true;
-  return im;
-}
-
 /* ---------- props ---------- */
+const flat = (g) => (g.index ? g.toNonIndexed() : g);
 function paint(g, rgb, emit = 0) {
   const n = g.attributes.position.count, c = new Float32Array(n * 3), e = new Float32Array(n);
   for (let i = 0; i < n; i++) { c[i * 3] = rgb[0]; c[i * 3 + 1] = rgb[1]; c[i * 3 + 2] = rgb[2]; e[i] = emit; }
   g.setAttribute('color', new THREE.BufferAttribute(c, 3)); g.setAttribute('aEmit', new THREE.BufferAttribute(e, 1));
   return g;
 }
-const flat = (g) => (g.index ? g.toNonIndexed() : g);
 function lampGeometry() {
-  const pole = new THREE.CylinderGeometry(0.07, 0.11, 7.6, 8).translate(0, 3.8, 0);
-  const base = new THREE.CylinderGeometry(0.18, 0.22, 0.6, 8).translate(0, 0.3, 0);
-  const arm = new THREE.BoxGeometry(0.08, 0.08, 1.9).translate(0, 7.45, 0.9);
+  const pole = new THREE.CylinderGeometry(0.07, 0.11, 7.6, 10).translate(0, 3.8, 0);
+  const base = new THREE.CylinderGeometry(0.18, 0.24, 0.7, 10).translate(0, 0.35, 0);
+  const ring = new THREE.TorusGeometry(0.12, 0.03, 6, 12).rotateX(Math.PI / 2).translate(0, 0.9, 0);
+  const arm = new THREE.CylinderGeometry(0.04, 0.05, 1.9, 6).rotateX(Math.PI / 2).translate(0, 7.45, 0.9);
   const head = new THREE.BoxGeometry(0.42, 0.14, 0.8).translate(0, 7.4, 1.85);
-  return mergeGeometries([pole, base, arm, head].map(flat));
-}
-function treeGeometries(seed) {
-  const r = mulberry32(seed);
-  const trunk = new THREE.CylinderGeometry(0.12, 0.22, 3.4, 7).translate(0, 1.7, 0);
-  const blobs = [];
-  for (let k = 0; k < 4; k++) {
-    let g = new THREE.IcosahedronGeometry(1.5 + r() * 0.9, 3);
-    g.deleteAttribute('normal'); g.deleteAttribute('uv'); g = mergeVertices(g);
-    const p = g.attributes.position;
-    for (let i = 0; i < p.count; i++) { // lumpy leaf clusters
-      const x = p.getX(i), y = p.getY(i), z = p.getZ(i), n = 1 + 0.16 * Math.sin(x * 3.1 + z * 2.3) * Math.cos(y * 2.7 + x) + 0.08 * Math.sin(x * 9.3 - y * 7.1 + z * 8.7);
-      p.setXYZ(i, x * n, y * n * 0.85, z * n);
-    }
-    g.translate((r() - 0.5) * 2.2, 4.4 + r() * 1.6, (r() - 0.5) * 2.2); g.computeVertexNormals(); blobs.push(g);
-  }
-  const canopy = mergeGeometries(blobs);
-  return { trunk, canopy };
+  return mergeGeometries([pole, base, ring, arm, head].map(flat));
 }
 function carGeometry() {
+  const body = new THREE.BoxGeometry(1.85, 0.62, 4.4, 1, 1, 4), p = body.attributes.position;
+  for (let i = 0; i < p.count; i++) { const z = p.getZ(i), y = p.getY(i); if (Math.abs(z) > 1.9 && y > 0) p.setY(i, y - 0.12); } // sloped bonnet / boot
+  body.translate(0, 0.62, 0);
+  const cabin = new THREE.BoxGeometry(1.62, 0.6, 2.3), cp = cabin.attributes.position;
+  for (let i = 0; i < cp.count; i++) if (cp.getY(i) > 0) { cp.setX(i, cp.getX(i) * 0.9); cp.setZ(i, cp.getZ(i) * 0.82); } // tapered greenhouse
+  cabin.translate(0, 1.22, -0.25);
   const parts = [
-    paint(new THREE.BoxGeometry(1.85, 0.62, 4.4).translate(0, 0.62, 0), [1, 1, 1]),
-    paint(new THREE.BoxGeometry(1.62, 0.6, 2.3).translate(0, 1.22, -0.25), [0.05, 0.06, 0.07]),
-    paint(new THREE.BoxGeometry(1.66, 0.08, 2.0).translate(0, 1.55, -0.25), [1, 1, 1]),
-    paint(new THREE.BoxGeometry(0.4, 0.14, 0.05).translate(-0.62, 0.72, 2.21), [1, 1, 0.9], 1),
-    paint(new THREE.BoxGeometry(0.4, 0.14, 0.05).translate(0.62, 0.72, 2.21), [1, 1, 0.9], 1),
-    paint(new THREE.BoxGeometry(0.45, 0.12, 0.05).translate(-0.6, 0.78, -2.21), [0.8, 0.05, 0.03], 2),
-    paint(new THREE.BoxGeometry(0.45, 0.12, 0.05).translate(0.6, 0.78, -2.21), [0.8, 0.05, 0.03], 2),
+    paint(body, [1, 1, 1]),
+    paint(cabin, [0.05, 0.06, 0.07]),
+    paint(new THREE.BoxGeometry(0.4, 0.14, 0.05).translate(-0.62, 0.66, 2.21), [1, 1, 0.9], 1),
+    paint(new THREE.BoxGeometry(0.4, 0.14, 0.05).translate(0.62, 0.66, 2.21), [1, 1, 0.9], 1),
+    paint(new THREE.BoxGeometry(0.45, 0.12, 0.05).translate(-0.6, 0.74, -2.21), [0.8, 0.05, 0.03], 2),
+    paint(new THREE.BoxGeometry(0.45, 0.12, 0.05).translate(0.6, 0.74, -2.21), [0.8, 0.05, 0.03], 2),
   ];
-  for (const [x, z] of [[-0.86, 1.4], [0.86, 1.4], [-0.86, -1.35], [0.86, -1.35]]) parts.push(paint(new THREE.CylinderGeometry(0.34, 0.34, 0.24, 10).rotateZ(Math.PI / 2).translate(x, 0.34, z), [0.04, 0.04, 0.04]));
+  for (const [x, z] of [[-0.86, 1.4], [0.86, 1.4], [-0.86, -1.35], [0.86, -1.35]]) parts.push(paint(new THREE.CylinderGeometry(0.34, 0.34, 0.24, 12).rotateZ(Math.PI / 2).translate(x, 0.34, z), [0.04, 0.04, 0.04]));
   return mergeGeometries(parts.map(flat));
 }
 
@@ -131,23 +125,26 @@ export class StreetProps {
   constructor(layout, lighting) {
     this.group = new THREE.Group();
     this.night = lighting.uniforms.uNight;
+    this.layout = layout;
     const r = mulberry32(layout.seed + 77), m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
     const p = new THREE.Vector3(), s = new THREE.Vector3(1, 1, 1), col = new THREE.Color();
+    const nL = Math.max(1, layout.lamps.length);
 
     // lamps
     const lampMat = new THREE.MeshStandardMaterial({ color: 0x24272a, metalness: 0.75, roughness: 0.4 });
-    const lamps = new THREE.InstancedMesh(lampGeometry(), lampMat, layout.lamps.length);
+    const lamps = new THREE.InstancedMesh(lampGeometry(), lampMat, nL);
     this.bulbMat = new THREE.MeshStandardMaterial({ color: 0x222222, emissive: 0xffc27a, emissiveIntensity: 0 });
-    const bulbs = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.34, 0.7).rotateX(Math.PI / 2).translate(0, 7.32, 1.85), this.bulbMat, layout.lamps.length);
+    const bulbs = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.34, 0.7).rotateX(Math.PI / 2).translate(0, 7.32, 1.85), this.bulbMat, nL);
     const poolTex = (() => {
       const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
       const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.45, 'rgba(255,255,255,.35)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
       g.fillStyle = gr; g.fillRect(0, 0, 128, 128); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
     })();
     this.poolMat = new THREE.MeshBasicMaterial({ map: poolTex, color: 0xffb060, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 });
-    const pools = new THREE.InstancedMesh(new THREE.PlaneGeometry(15, 15).rotateX(-Math.PI / 2), this.poolMat, layout.lamps.length);
+    const pools = new THREE.InstancedMesh(new THREE.PlaneGeometry(15, 15).rotateX(-Math.PI / 2), this.poolMat, nL);
+    lamps.count = bulbs.count = pools.count = layout.lamps.length;
     layout.lamps.forEach((l, i) => {
-      q.setFromAxisAngle(up, l.ry); p.set(l.x, ROAD.CURB_H, l.z); m4.compose(p, q, s);
+      q.setFromAxisAngle(up, l.ry); p.set(l.x, CURB_H, l.z); m4.compose(p, q, s);
       lamps.setMatrixAt(i, m4); bulbs.setMatrixAt(i, m4);
       const off = new THREE.Vector3(0, 0, 2.2).applyQuaternion(q);
       pools.setMatrixAt(i, new THREE.Matrix4().makeTranslation(l.x + off.x, 0.2, l.z + off.z));
@@ -155,23 +152,8 @@ export class StreetProps {
     lamps.castShadow = true; lamps.receiveShadow = true; pools.userData.noAO = true; pools.renderOrder = 2;
     this.group.add(lamps, bulbs, pools);
 
-    // trees
-    const tg = treeGeometries(layout.seed);
-    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3828, roughness: 0.95 });
-    const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, metalness: 0, envMapIntensity: 0.5 });
-    const trunks = new THREE.InstancedMesh(tg.trunk, trunkMat, layout.trees.length);
-    const leaves = new THREE.InstancedMesh(tg.canopy, leafMat, layout.trees.length);
-    layout.trees.forEach((t, i) => {
-      q.setFromAxisAngle(up, r() * 6.28); s.setScalar(t.s); p.set(t.x, ROAD.CURB_H, t.z); m4.compose(p, q, s);
-      trunks.setMatrixAt(i, m4); leaves.setMatrixAt(i, m4);
-      leaves.setColorAt(i, col.setHSL(0.2 + r() * 0.1, 0.35 + r() * 0.2, 0.09 + r() * 0.07));
-    });
-    s.set(1, 1, 1);
-    for (const im of [trunks, leaves]) { im.castShadow = true; im.receiveShadow = true; }
-    this.group.add(trunks, leaves);
-
-    // cars (parked + moving share one instanced mesh)
-    const carMat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.55, roughness: 0.32 });
+    // cars: parked + traffic following the road graph (right-hand traffic, smooth turns)
+    const carMat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.6, roughness: 0.28 });
     carMat.onBeforeCompile = (sh) => {
       sh.uniforms.uNight = this.night;
       sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float aEmit; varying float vEmit;')
@@ -182,24 +164,51 @@ export class StreetProps {
           else if (vEmit > 1.5) totalEmissiveRadiance += vec3(1., .05, .02) * (.3 + uNight * 3.);`);
     };
     carMat.customProgramCacheKey = () => 'car-v1';
+    const cars = (layout.params.cars ?? 1);
     const moving = [];
-    for (const lane of layout.lanes) {
-      const n = Math.floor((lane.b - lane.a) / 120);
-      for (let k = 0; k < n; k++) moving.push({ lane, s: lane.a + (k + r()) * ((lane.b - lane.a) / n), v: r.range(8, 14) });
+    for (const ch of layout.chains) {
+      const len = ch.s1 - ch.s0; if (len < 8) continue;
+      const n = Math.floor((len / 110) * cars + r());
+      for (let k = 0; k < n; k++) {
+        const dir = r() < 0.5 ? 1 : -1, lane = Math.floor(r() * ch.lanes);
+        moving.push({ ch, dir, lane, s: ch.s0 + r() * len, v: r.range(8, 13), turn: null });
+      }
     }
     this.moving = moving;
-    const total = layout.parked.length + moving.length;
-    const cars = this.cars = new THREE.InstancedMesh(carGeometry(), carMat, total);
+    const total = Math.max(1, layout.parked.length + moving.length);
+    this.cars = new THREE.InstancedMesh(carGeometry(), carMat, total);
+    this.cars.count = layout.parked.length + moving.length;
     layout.parked.forEach((c, i) => {
-      q.setFromAxisAngle(up, c.ry); p.set(c.x, 0, c.z); cars.setMatrixAt(i, m4.compose(p, q, s));
-      cars.setColorAt(i, col.set(CAR_COLORS[Math.floor(r() * CAR_COLORS.length)]));
+      q.setFromAxisAngle(up, c.ry); p.set(c.x, 0, c.z); this.cars.setMatrixAt(i, m4.compose(p, q, s));
+      this.cars.setColorAt(i, col.set(CAR_COLORS[Math.floor(r() * CAR_COLORS.length)]));
     });
     this.movingOffset = layout.parked.length;
-    moving.forEach((c, i) => cars.setColorAt(this.movingOffset + i, col.set(CAR_COLORS[Math.floor(r() * CAR_COLORS.length)])));
-    cars.castShadow = true; cars.receiveShadow = true; cars.frustumCulled = false;
-    this.group.add(cars);
-    this._m4 = m4; this._q = q; this._p = p; this._s = s; this._up = up;
+    moving.forEach((c, i) => this.cars.setColorAt(this.movingOffset + i, col.set(CAR_COLORS[Math.floor(r() * CAR_COLORS.length)])));
+    this.cars.castShadow = true; this.cars.receiveShadow = true; this.cars.frustumCulled = false;
+    this.group.add(this.cars);
+    this._m4 = m4; this._q = q; this._p = p; this._s = s; this._up = up; this._r = r;
     this.update(0);
+  }
+
+  _lanePos(ch, s, dir, lane) { // world position on a lane
+    const q = ch.pl.at(s), t = ch.pl.tangent(s), nr = G2.inward(t), u = dir * (lane + 0.5) * ch.laneW;
+    return { p: [q[0] + nr[0] * u, q[1] + nr[1] * u], t: dir > 0 ? t : G2.mul(t, -1) };
+  }
+
+  _startTurn(c) {
+    const node = c.dir > 0 ? c.ch.b : c.ch.a, refs = this.layout.nodeChains.get(node) || [];
+    let opts = refs.filter((ref) => ref.ch !== c.ch && ref.ch.s1 - ref.ch.s0 > 8);
+    if (!opts.length) opts = refs.filter((ref) => ref.ch.s1 - ref.ch.s0 > 8); // dead end: U-turn
+    if (!opts.length) { c.dir = -c.dir; return; }
+    const ref = opts[Math.floor(this._r() * opts.length)];
+    const nd = ref.end === 'a' ? 1 : -1, ns = nd > 0 ? ref.ch.s0 : ref.ch.s1, lane = Math.min(c.lane, ref.ch.lanes - 1);
+    const A = this._lanePos(c.ch, c.s, c.dir, c.lane), B = this._lanePos(ref.ch, ns, nd, lane);
+    // control point: intersection of both lane lines, falling back to the midpoint
+    const den = G2.cross(A.t, B.t);
+    let C = G2.mul(G2.add(A.p, B.p), 0.5);
+    if (Math.abs(den) > 0.2) { const k = G2.cross(G2.sub(B.p, A.p), B.t) / den; if (k > 0 && k < 40) C = G2.add(A.p, G2.mul(A.t, k)); }
+    const len = G2.dist(A.p, C) + G2.dist(C, B.p);
+    c.turn = { A: A.p, B: B.p, C, t: 0, len: Math.max(1, len), next: { ch: ref.ch, dir: nd, s: ns, lane } };
   }
 
   update(dt) {
@@ -208,10 +217,22 @@ export class StreetProps {
     this.poolMat.opacity = n * 0.55;
     const { _m4: m4, _q: q, _p: p, _s: s, _up: up } = this;
     this.moving.forEach((c, i) => {
-      const L = c.lane, span = L.b - L.a;
-      c.s += c.v * dt * L.dir; if (c.s > L.b) c.s -= span; if (c.s < L.a) c.s += span;
-      if (L.axis === 'z') { p.set(L.c, 0, c.s); q.setFromAxisAngle(up, L.dir > 0 ? 0 : Math.PI); }
-      else { p.set(c.s, 0, L.c); q.setFromAxisAngle(up, L.dir > 0 ? Math.PI / 2 : -Math.PI / 2); }
+      let pos, dir;
+      if (c.turn) {
+        const T = c.turn; T.t += (c.v * 0.7 * dt) / T.len;
+        if (T.t >= 1) { Object.assign(c, T.next); c.turn = null; }
+        else {
+          const t = T.t, u = 1 - t;
+          pos = [u * u * T.A[0] + 2 * u * t * T.C[0] + t * t * T.B[0], u * u * T.A[1] + 2 * u * t * T.C[1] + t * t * T.B[1]];
+          dir = G2.norm([2 * u * (T.C[0] - T.A[0]) + 2 * t * (T.B[0] - T.C[0]), 2 * u * (T.C[1] - T.A[1]) + 2 * t * (T.B[1] - T.C[1])]);
+        }
+      }
+      if (!c.turn) {
+        c.s += c.v * dt * c.dir;
+        if ((c.dir > 0 && c.s >= c.ch.s1) || (c.dir < 0 && c.s <= c.ch.s0)) { c.s = Math.max(c.ch.s0, Math.min(c.ch.s1, c.s)); this._startTurn(c); }
+        const lp = this._lanePos(c.ch, c.s, c.dir, c.lane); pos = lp.p; dir = lp.t;
+      }
+      q.setFromAxisAngle(up, Math.atan2(dir[0], dir[1])); p.set(pos[0], 0, pos[1]);
       this.cars.setMatrixAt(this.movingOffset + i, m4.compose(p, q, s));
     });
     this.cars.instanceMatrix.needsUpdate = true;

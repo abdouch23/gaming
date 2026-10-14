@@ -29,20 +29,30 @@
         <h3>الأدوات <small>Tools</small></h3>
         <div class="tools">
           <label><input type="radio" name="tool" value="orbit" checked /> تصفح</label>
+          <label><input type="radio" name="tool" value="edit" /> تعديل مبنى</label>
           <label><input type="radio" name="tool" value="strike" /> صاروخ</label>
           <label><input type="radio" name="tool" value="implode" /> تفجير متحكَّم</label>
         </div>
         <label>قوة الانفجار <input id="power" type="range" min="0.5" max="2.2" step="0.05" value="1" /></label>
+        <div id="inspector" class="inspector hidden">
+          <b id="inspTitle">مبنى</b>
+          <label>الطراز <select id="inspStyle"><option value="haussmann">هوسماني</option><option value="brick">طوب</option><option value="office">مكاتب</option><option value="tower">برج زجاجي</option><option value="townhouse">منزل</option></select></label>
+          <label>عدد الطوابق <input id="inspFloors" type="range" min="1" max="70" step="1" /><span id="inspFloorsVal"></span></label>
+          <div class="row"><button id="inspRandom">تصميم آخر</button><button id="inspDelete">حذف</button><button id="inspImplode">تفجير</button></div>
+        </div>
         <div class="row"><button id="clearDebris">إعادة بناء المدينة</button></div>
       </section>
 
       <section>
-        <h3>المدينة <small>City</small></h3>
-        <label>البذرة Seed <input id="seed" type="number" value="2026" /></label>
-        <label>الحجم (بلوكات)
-          <select id="size"><option value="6">6×6</option><option value="8" selected>8×8</option><option value="10">10×10</option><option value="12">12×12</option></select>
-        </label>
+        <h3>المدينة والطرقات <small>City &amp; Roads</small></h3>
+        <label>نموذج جاهز <select id="preset"><option value="">— مخصص —</option></select></label>
+        <label>شكل الشبكة <select id="p_type"><option value="grid">شبكي (مستقيم)</option><option value="organic">عضوي (منحني)</option><option value="radial">دائري (حلقات وأشعة)</option></select></label>
+        <label>البذرة Seed <input id="p_seed" type="number" /></label>
+        <div id="params"></div>
+        <div class="styles" id="styleToggles"></div>
+        <label>توليد تلقائي عند التغيير <input id="autoGen" type="checkbox" checked /></label>
         <div class="row"><button id="generate">توليد</button><button id="randomSeed">مدينة عشوائية</button></div>
+        <canvas id="minimap" width="276" height="276" title="انقر للانتقال"></canvas>
       </section>
 
       <section>
@@ -66,19 +76,23 @@
           <button id="applyRes">تطبيق</button>
         </label>
         <small id="vram" class="note"></small>
-        <label>التجوية (أوساخ / مطر) <input id="weather" type="range" min="0" max="1.6" step="0.05" value="0.7" /></label>
+        <label>التجوية (أوساخ) <input id="weather" type="range" min="0" max="1.6" step="0.05" value="0.7" /></label>
+        <label>مطر / بِرك ماء <input id="wet" type="range" min="0" max="1" step="0.02" value="0" /></label>
+        <label>تفاصيل قريبة Detail <input id="detail" type="range" min="0" max="1.5" step="0.05" value="1" /></label>
+        <label>الرياح (الأشجار) <input id="wind" type="range" min="0" max="3" step="0.05" value="1" /></label>
         <label>قوة Normal <input id="normalStr" type="range" min="0" max="2.5" step="0.05" value="1" /></label>
       </section>
 
       <section>
         <h3>الأداء <small>Performance</small></h3>
-        <label>مسافة LOD <input id="lod" type="range" min="120" max="800" step="10" value="320" /></label>
+        <label>مسافة LOD المباني <input id="lod" type="range" min="120" max="800" step="10" value="320" /></label>
+        <label>مسافة LOD الأشجار <input id="treeLod" type="range" min="40" max="500" step="10" value="150" /></label>
         <label>دقة العرض
           <select id="pr"><option value="0.75">0.75×</option><option value="1">1×</option><option value="1.5" selected>1.5×</option><option value="2">2×</option></select>
         </label>
         <pre id="stats"></pre>
       </section>
-      <p class="help">سحب يسار = تحريك · يمين = دوران · عجلة = تقريب · W A S D · نقرة = استخدام الأداة · 1/2/3 لتبديل الأدوات</p>
+      <p class="help">سحب يسار = تحريك · يمين = دوران · عجلة = تقريب · W A S D · نقرة = استخدام الأداة · 1/2/3/4 لتبديل الأدوات</p>
     </div>
   </aside>
   <div id="toolHint"></div>

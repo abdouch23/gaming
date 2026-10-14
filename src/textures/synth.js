@@ -193,8 +193,8 @@ function recipe(layer, seed, M) {
         worley(u, v, 140, 140, S, W);
         const peb = Math.sqrt(clamp01(1 - W[0] / 0.55)), n = fbm(u, v, 16, 16, 4, S + 1);
         o.h = 0.008 * peb + 0.002 * n;
-        const g = 0.38 + 0.3 * W[2] + 0.05 * n;
-        pal(o, [g, g * 0.98, g * 0.95]); o.ro = 0.88;
+        const g = 0.27 + 0.22 * W[2] + 0.04 * n;
+        pal(o, [g, g * 0.97, g * 0.93]); o.ro = 0.88;
       };
     }
     case L.CLAY: {
@@ -223,30 +223,58 @@ function recipe(layer, seed, M) {
       };
     }
     case L.ASPHALT: {
-      const patch = coarse(128, (u, v) => fbm(u, v, 2, 2, 5, S + 3));
+      const wearM = coarse(128, (u, v) => fbm(u, v, 3, 3, 5, S + 3));
       const oil = coarse(128, (u, v) => fbm(u, v, 5, 5, 4, S + 4));
+      const crackM = coarse(128, (u, v) => fbm(u, v, 2, 2, 4, S + 5));
+      const W3 = new Float32Array(3);
       return (u, v, o) => {
-        worley(u, v, 360, 360, S, W);
-        const agg = W[0] < 0.3 ? 1 : 0, n = fbm(u, v, 96, 96, 2, S + 1);
-        worley(u, v, 5, 5, S + 2, W2);
-        const crack = (W2[1] - W2[0] < 0.012 && patch(u, v) < -0.05) ? 1 : 0;
-        const p = patch(u, v), newer = p > 0.28 ? 1 : 0, ol = sstep(0.35, 0.6, oil(u, v));
-        o.h = agg * 0.0015 + 0.0006 * n - crack * 0.004;
-        let g = 0.15 + agg * (0.08 + 0.18 * W[2]) + 0.02 * n;
-        g *= newer ? 0.7 : 1; g *= 1 - ol * 0.45; g *= 1 - crack * 0.6;
-        pal(o, [g, g, g * 1.02]); o.ro = newer ? 0.7 : 0.88 - ol * 0.3;
+        // aggregate: coarse stones (~2 cm) and fine sand, embedded in dark bitumen
+        worley(u, v, 260, 260, S, W); worley(u, v, 720, 720, S + 1, W2);
+        const wm = wearM(u, v), expose = 0.3 + 0.35 * sstep(-0.2, 0.5, wm);
+        const stone = clamp01(1 - W[0] / expose), sand = clamp01(1 - W2[0] / 0.45);
+        const n = fbm(u, v, 96, 96, 2, S + 2);
+        let h = 0.0022 * Math.sqrt(stone) + 0.0006 * sand + 0.0003 * n;
+        const tone = W[2] > 0.93 ? 0.62 : W[2] > 0.7 ? 0.36 : 0.26 + 0.08 * W[2];
+        let g = stone > 0 ? mix(0.07, tone, Math.sqrt(stone)) : mix(0.06, 0.13, sand) + 0.02 * n;
+        let ro = stone > 0 ? 0.62 : 0.86;
+        // repair patches (axis-aligned rectangles of newer, darker asphalt)
+        const pu = u * 3, pv = v * 3, cu = Math.floor(pu), cv = Math.floor(pv), fu = pu - cu, fv = pv - cv, pid = wrap(cu, 3) + wrap(cv, 3) * 3;
+        const has = rnd(pid, 11, S) < 0.35, x0 = 0.1 + 0.3 * rnd(pid, 12, S), x1 = x0 + 0.25 + 0.3 * rnd(pid, 13, S), y0 = 0.1 + 0.3 * rnd(pid, 14, S), y1 = y0 + 0.2 + 0.35 * rnd(pid, 15, S);
+        const inP = has && fu > x0 && fu < x1 && fv > y0 && fv < y1;
+        if (inP) {
+          g = stone > 0.4 ? mix(0.05, tone * 0.7, stone) : 0.055 + 0.015 * n; ro = 0.7; h = 0.0012 * stone + 0.001;
+          const e = Math.min(fu - x0, x1 - fu, fv - y0, y1 - fv) * M / 3;
+          if (e < 0.03) { g = 0.03; ro = 0.35; h += 0.0008; } // sealed seam
+        }
+        // alligator cracks in old surface + long sealed (tar) cracks
+        worley(u, v, 14, 14, S + 6, W3);
+        const cm = crackM(u, v);
+        if (!inP && W3[1] - W3[0] < 0.035 * sstep(0.05, 0.4, cm)) { h -= 0.005; g *= 0.35; ro = 0.95; }
+        worley(u, v, 3, 3, S + 7, W3);
+        if (W3[1] - W3[0] < 0.012 && cm < 0.1) { g = 0.025; ro = 0.3; h = Math.max(h, 0.0016); }
+        const ol = sstep(0.4, 0.7, oil(u, v));
+        g *= 1 - ol * 0.35; ro -= ol * 0.25;
+        g *= 0.92 + 0.16 * sstep(-0.4, 0.6, wm); // sun-bleached areas
+        o.h = h; pal(o, [g, g, g * 1.03]); o.ro = clamp01(ro);
       };
     }
-    case L.PAVERS: {
+    case L.PAVERS: { // 30x15 cm concrete pavers, running bond, with sand joints and stains
       const dirt = coarse(64, (u, v) => fbm(u, v, 3, 3, 4, S + 3));
+      const gum = coarse(64, (u, v) => fbm(u, v, 9, 9, 3, S + 6));
+      const rows = 13, cols = 6;
       return (u, v, o) => {
-        const pu = u * 4, pv = v * 4, iu = Math.floor(pu), iv = Math.floor(pv), fu = pu - iu, fv = pv - iv, id = iu + iv * 5;
-        const e = Math.min(fu, 1 - fu, fv, 1 - fv) * M / 4, n = fbm(u, v, 48, 48, 3, S + 1);
-        if (e < 0.004) { o.h = -0.004; pal(o, [0.28, 0.26, 0.22]); o.ro = 0.95; return; }
+        const pv = v * rows, iv = Math.floor(pv), fv = pv - iv, pu = u * cols + (iv & 1) * 0.5, iu = Math.floor(pu), fu = pu - iu;
+        const id = wrap(iu, cols) + wrap(iv, rows) * 7;
+        const e = Math.min(Math.min(fu, 1 - fu) * M / cols, Math.min(fv, 1 - fv) * M / rows), n = fbm(u, v, 48, 48, 3, S + 1);
+        if (e < 0.003) { o.h = -0.004; pal(o, [0.36, 0.33, 0.28], 0.9 + 0.1 * n); o.ro = 0.97; return; }
         const tilt = (rnd(id, 1, S) - 0.5) * 0.004 * (fu - 0.5) + (rnd(id, 2, S) - 0.5) * 0.004 * (fv - 0.5);
-        o.h = 0.004 * Math.sqrt(sstep(0, 0.006, e - 0.004)) + tilt + 0.0007 * n;
-        const k = 0.86 + 0.18 * rnd(id, 3, S) + 0.05 * n - 0.08 * dirt(u, v);
-        pal(o, [0.62, 0.6, 0.56], k); o.ro = 0.78 + 0.1 * n;
+        worley(u, v, 220, 220, S + 9, W);
+        o.h = 0.003 * Math.sqrt(sstep(0, 0.005, e - 0.003)) + tilt + 0.0005 * n - (W[0] < 0.12 ? 0.0004 : 0);
+        const shade = [[0.64, 0.62, 0.58], [0.58, 0.56, 0.53], [0.7, 0.67, 0.62], [0.55, 0.5, 0.46]][hash3(id, 5, S) & 3];
+        const k = 0.86 + 0.16 * rnd(id, 3, S) + 0.05 * n - 0.1 * sstep(0, 0.6, dirt(u, v));
+        pal(o, shade, k);
+        if (gum(u, v) > 0.55 && W[2] < 0.25) { o.r *= 0.55; o.g *= 0.55; o.b *= 0.55; } // gum / stains
+        o.ro = 0.8 + 0.1 * n;
       };
     }
     case L.CURB: {
