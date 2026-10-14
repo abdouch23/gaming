@@ -20,8 +20,10 @@ export class City {
     ground.receiveShadow = true; this.group.add(ground);
     this.far = new THREE.Mesh(buildFarGround(), materials.world); this.far.receiveShadow = true; // outside the AO level
     this.props = new StreetProps(layout, lighting); this.group.add(this.props.group);
+    this.props.group.traverse((o) => (o.userData.noAO = true)); // moving / thin props stay out of the height field
     lighting.patch(this.props.group);
     this.trees = new Trees(layout, lighting); this.group.add(this.trees.group);
+    this.trees.group.traverse((o) => (o.userData.noAO = true));
     this.lighting = lighting;
 
     // chunks: spatial cells over block centroids
@@ -44,7 +46,7 @@ export class City {
     layout.buildings.forEach((b) => this.bounds.union(b.box));
     const B = layout.bounds, m = layout.maxW;
     this.bounds.expandByPoint(new THREE.Vector3(B.minX - m, 0, B.minZ - m)).expandByPoint(new THREE.Vector3(B.maxX + m, 1, B.maxZ + m));
-    this._v = new THREE.Vector3();
+    this._v = new THREE.Vector3(); this._v2 = new THREE.Vector3();
   }
 
   _buildSimple(ch) {
@@ -68,7 +70,7 @@ export class City {
     }
     if (J.k < ch.buildings.length) return false;
     const grp = new THREE.Group();
-    const o = new THREE.Mesh(J.G.build(), this.mats.world); o.castShadow = o.receiveShadow = true;
+    const o = new THREE.Mesh(J.G.build(), this.mats.worldDetail); o.castShadow = o.receiveShadow = true;
     const g = new THREE.Mesh(J.Gg.build(), this.mats.glass); g.receiveShadow = true;
     grp.add(o, g); grp.userData.chunk = ch; grp.visible = false;
     ch.detail = grp; ch.job = null; this.group.add(grp);
@@ -81,7 +83,8 @@ export class City {
 
   /** streaming + LOD switch, call once per frame */
   update(camera, dt) {
-    const cp = camera.position, lod = this.lodDistance;
+    const cp = camera.position, lod = this.lodDistance, band = this.mats.u.uLodBand.value;
+    this.mats.u.uLodDist.value = lod;
     for (const ch of this.chunks) ch.dist = ch.box.distanceToPoint(cp);
     const want = this.chunks.filter((c) => c.dist < lod && !c.detail).sort((a, b) => a.dist - b.dist);
     const deadline = performance.now() + this.budgetMs;
@@ -91,9 +94,13 @@ export class City {
     let n = 0;
     for (const ch of this.chunks) {
       if (ch.detail && ch.dist > lod * 1.6) this._disposeDetail(ch);
-      const showDetail = !!ch.detail && ch.dist < lod + 15;
+      // LOD0 and LOD1 overlap inside the fade band; the shaders dither them per pixel by distance
+      const far = ch.box.getCenter(this._v).distanceTo(cp) + ch.box.getSize(this._v2).length() / 2;
+      const showDetail = !!ch.detail && ch.dist < lod;
       if (ch.detail) ch.detail.visible = showDetail;
-      ch.simple.visible = !showDetail;
+      ch.simple.visible = !showDetail || far > lod - band;
+      ch.simple.material = showDetail ? this.mats.worldFadeOut : this.mats.world;
+      ch.simple.castShadow = !showDetail; // LOD0 casts the whole chunk's shadow
       if (showDetail) n++;
     }
     this.stats.detailChunks = n; this.stats.building = this.chunks.filter((c) => c.job).length;

@@ -29,9 +29,9 @@ vec3 interiorRoom(vec2 c, vec3 vT, float seed, vec2 ws, float night){
   col*=mix(1.,.45,clamp(-h.z,0.,1.));
   float blind=h21(vec2(seed,8.1))>.62?h21(vec2(seed,9.4))*.75:0.;
   if(c.y>1.-blind)col=vec3(.85,.82,.74)*(.9+.1*sin(c.y*120.));
-  float lit=step(h21(vec2(seed,3.3)),mix(.05,.48,night));
+  float lit=step(h21(vec2(seed,3.3)),mix(.28,.48,night));
   vec3 lightCol=mix(vec3(1.,.78,.5),vec3(.85,.92,1.),step(.65,h21(vec2(seed,4.4))));
-  return col*mix(vec3(.07),lightCol*2.4,lit*night)+col*(1.-night)*.05;
+  return col*mix(vec3(.07),lightCol*mix(.75,2.4,night),lit)+col*(1.-night)*.05;
 }
 // procedural window grid of the facade (LOD / debris surfaces). F = (bay, floorH, groundH, style)
 float facadeWindow(vec2 f, vec4 F, out vec2 cuv, out vec2 cid, out vec2 ws, out float edge){
@@ -64,7 +64,7 @@ const FRAG_DECL = /* glsl */`
 precision highp sampler2DArray;
 uniform sampler2DArray uAlb, uNrm; uniform sampler2D uGrime;
 uniform float uTile[16], uMetal[16], uAnti[16];
-uniform float uWeather, uNormalStr, uNight, uWet, uDetail;
+uniform float uWeather, uNormalStr, uNight, uWet, uDetail, uPom[16], uPomOn, uLodDist, uLodBand;
 flat varying float cLayer; flat varying vec4 cFacade; flat varying float cSeed;
 varying vec2 cUv; varying vec3 cTint; varying vec3 cWP; varying vec3 cWN;
 ` + COMMON_GLSL;
@@ -76,6 +76,39 @@ float wRough, wMetal, wAO; vec3 wN, wEmis = vec3(0.);
   vec2 tuv = cUv / uTile[Li];
   vec3 N = normalize(cWN); float vert = 1. - abs(N.y), hor = smoothstep(.7, .95, N.y);
   float camD = length(cameraPosition - cWP);
+  #if defined(LOD_DETAIL) || defined(LOD_FADEOUT)
+  { // dithered cross-fade between LOD0 and LOD1 (complementary per pixel, no popping)
+    float x = clamp((camD - (uLodDist - uLodBand)) / uLodBand, 0., 1.);
+    float n = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(.06711056, .00583715))));
+    #ifdef LOD_DETAIL
+    if (n < x) discard;
+    #else
+    if (n >= x) discard;
+    #endif
+  }
+  #endif
+  // parallax occlusion mapping: virtual micro-geometry on near surfaces (layer height in alb.a)
+  float pomD = uPom[Li] * uPomOn;
+  if (pomD > 0. && camD < 28.) {
+    vec3 dp1 = dFdx(cWP), dp2 = dFdy(cWP); vec2 du1 = dFdx(cUv), du2 = dFdy(cUv);
+    vec3 p2 = cross(dp2, N), p1 = cross(N, dp1);
+    vec3 Tg = p2 * du1.x + p1 * du2.x, Bg = p2 * du1.y + p1 * du2.y;
+    float im = inversesqrt(max(max(dot(Tg, Tg), dot(Bg, Bg)), 1e-12)); Tg *= im; Bg *= im;
+    vec3 Vw = normalize(cameraPosition - cWP), Vt = vec3(dot(Vw, Tg), dot(Vw, Bg), dot(Vw, N));
+    float fade = 1. - smoothstep(16., 28., camD);
+    vec2 shift = Vt.xy / max(Vt.z, .2) * pomD / uTile[Li] * fade;
+    vec2 gx = dFdx(tuv), gy = dFdy(tuv);
+    float nL = mix(22., 8., camD / 28.), step1 = 1. / nL, cur = 0.;
+    vec2 uvP = tuv, prevUv = tuv; float depthAt = 1. - textureGrad(uAlb, vec3(tuv, Lf), gx, gy).a, prevD = depthAt;
+    for (int i = 0; i < 24; i++) {
+      if (cur >= depthAt || float(i) >= nL) break;
+      prevUv = uvP; prevD = depthAt - cur;
+      uvP -= shift * step1; cur += step1;
+      depthAt = 1. - textureGrad(uAlb, vec3(uvP, Lf), gx, gy).a;
+    }
+    float after = depthAt - cur, w = after / (after - prevD + 1e-5);
+    tuv = mix(uvP, prevUv, clamp(w, 0., 1.));
+  }
   vec4 gM = texture2D(uGrime, cWP.xz * (1. / 83.) + cWP.y * (1. / 131.));
   vec4 A = texture(uAlb, vec3(tuv, Lf)), Nn = texture(uNrm, vec3(tuv, Lf));
   if (uAnti[Li] > .5) { // anti-tiling: blend a rotated, rescaled second sample through a macro mask
@@ -205,14 +238,18 @@ export class CityMaterials {
       uAlb: { value: null }, uNrm: { value: null }, uGrime: { value: null },
       uTile: { value: pad16((d) => d.meters) }, uMetal: { value: pad16((d) => d.metal) }, uAnti: { value: pad16((d) => d.anti) },
       uWeather: { value: 0.7 }, uNormalStr: { value: 1.0 }, uNight: lighting.uniforms.uNight, uWet: { value: 0 }, uDetail: { value: 1 },
+      uPom: { value: pad16((d) => d.pom || 0) }, uPomOn: { value: 1 }, uLodDist: { value: 320 }, uLodBand: { value: 40 },
     };
     lib.onChange((l) => { this.u.uAlb.value = l.alb; this.u.uNrm.value = l.nrm; this.u.uGrime.value = l.grime; });
     this.world = this._world();
+    this.worldDetail = this._world('LOD_DETAIL');   // LOD0 chunks
+    this.worldFadeOut = this._world('LOD_FADEOUT'); // LOD1 chunks whose LOD0 is ready
     this.glass = this._glass();
   }
 
-  _world() {
-    const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0, normalMap: dummyNormal(), envMapIntensity: 0.55 });
+  _world(define) {
+    const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0, normalMap: CityMaterials._dn || (CityMaterials._dn = dummyNormal()), envMapIntensity: 0.55 });
+    if (define) m.defines = { [define]: '' };
     m.onBeforeCompile = (s) => {
       Object.assign(s.uniforms, this.u);
       s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>\n' + VERT_DECL)
@@ -227,7 +264,7 @@ export class CityMaterials {
           reflectedLight.directDiffuse *= mix(1., wAO, .35);`);
       this.lighting.injectSAO(s);
     };
-    m.customProgramCacheKey = () => 'city-world-v2';
+    m.customProgramCacheKey = () => 'city-world-v3' + (define || '');
     return m;
   }
 
@@ -248,8 +285,9 @@ export class CityMaterials {
           diffuseColor.rgb = mix(vec3(.015, .018, .02), cTint * .28, gMirror);`)
         .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = gMirror * .85;')
         .replace('#include <emissivemap_fragment>', 'totalEmissiveRadiance += gEmis;');
+      this.lighting.injectSAO(s);
     };
-    m.customProgramCacheKey = () => 'city-glass-v2';
+    m.customProgramCacheKey = () => 'city-glass-v3';
     return m;
   }
 }

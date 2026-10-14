@@ -14,6 +14,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { Lumina, LUMINA_GLSL, LUMINA_APPLY } from './Lumina.js';
 
 const VS = 'varying vec2 v;void main(){v=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}';
 
@@ -35,8 +36,9 @@ export class LevelLighting {
     const R = this.R = renderer, cam = this.cam = camera;
     this.scene = scene;
     this.params = {
-      exposure: 0.68, bloom: 0.22, saturation: 1.1, bounce: 0.35, contactAO: 0.7, ssao: true, probe: true,
-      time: 15.5, sunAzOffset: 0, shadowRadius: 220,
+      exposure: 0.62, bloom: 0.3, saturation: 1.12, bounce: 0, contactAO: 0.45, ssao: true, probe: false,
+      time: 17.0, sunAzOffset: 0, shadowRadius: 220,
+      lumina: true, gi: 1, spec: 1, fog: 1, godRays: 1, glare: 1, clouds: 1,
     };
     this.uniforms = { uNight: { value: 0 } }; // shared with city materials
     R.shadowMap.enabled = true; R.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -50,16 +52,25 @@ export class LevelLighting {
     // visible sky: gradient dome following the camera, with sun glow and night stars
     this.domeU = {
       uTop: { value: new THREE.Color() }, uHor: { value: new THREE.Color() }, uSun: { value: new THREE.Vector3(0, 1, 0) },
-      uSunCol: { value: new THREE.Color() }, uNight: this.uniforms.uNight,
+      uSunCol: { value: new THREE.Color() }, uNight: this.uniforms.uNight, uClouds: { value: 1 }, uTime: { value: 0 },
     };
     this.dome = new THREE.Mesh(new THREE.SphereGeometry(500, 48, 24), new THREE.ShaderMaterial({
       side: THREE.BackSide, depthWrite: false, fog: false, uniforms: this.domeU,
       vertexShader: 'varying vec3 p;void main(){p=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
-      fragmentShader: `uniform vec3 uTop,uHor,uSun,uSunCol;uniform float uNight;varying vec3 p;
+      fragmentShader: `uniform vec3 uTop,uHor,uSun,uSunCol;uniform float uNight,uClouds,uTime;varying vec3 p;
         float h3(vec3 x){return fract(sin(dot(x,vec3(127.1,311.7,74.7)))*43758.5453);}
+        float h2(vec2 q){q=fract(q*vec2(123.34,456.21));q+=dot(q,q+45.32);return fract(q.x*q.y);}
+        float vn(vec2 q){vec2 i=floor(q),f=fract(q);f=f*f*(3.-2.*f);return mix(mix(h2(i),h2(i+vec2(1,0)),f.x),mix(h2(i+vec2(0,1)),h2(i+1.),f.x),f.y);}
+        float fbm(vec2 q){float s=0.,a=.5;for(int i=0;i<5;i++){s+=a*vn(q);q=q*2.03+vec2(1.7,9.2);a*=.5;}return s;}
         void main(){vec3 d=normalize(p);float h=clamp(d.y,0.,1.);vec3 c=mix(uHor,uTop,smoothstep(0.,.45,h));
         if(d.y<0.)c=uHor*mix(1.,.55,smoothstep(0.,-.2,d.y));
-        float s=max(dot(d,normalize(uSun)),0.);c+=uSunCol*(pow(s,600.)*25.+pow(s,12.)*.25)*(1.-uNight);
+        float s=max(dot(d,normalize(uSun)),0.);c+=uSunCol*(pow(s,600.)*25.+pow(s,12.)*.25+pow(s,3.)*.12)*(1.-uNight);
+        if(d.y>0.&&uClouds>0.){ // two-layer fbm clouds, lit from the sun side (silver lining)
+          vec2 cp=d.xz/(d.y+.12)*1.6+vec2(uTime*.004,uTime*.0015);
+          float n=fbm(cp)*.65+fbm(cp*2.7+3.1)*.35, cov=smoothstep(.5,.78,n)*smoothstep(0.,.18,d.y)*uClouds;
+          float thick=smoothstep(.55,.95,n);
+          vec3 lit=mix(uHor*1.15+vec3(.15),uSunCol*1.8+uHor*.4,pow(s,5.)*.8+.2)*(1.-thick*.45);
+          c=mix(c,mix(lit,vec3(.02,.025,.04),uNight*.9),cov);}
         vec3 g=floor(d*420.);float st=step(.9985,h3(g))*smoothstep(.05,.3,d.y)*uNight;c+=vec3(st*1.6);
         gl_FragColor=vec4(c,1.);}`,
     }));
@@ -70,7 +81,8 @@ export class LevelLighting {
     const U = this.sky.material.uniforms; U.turbidity.value = 2.2; U.rayleigh.value = 2.4; U.mieCoefficient.value = 0.002; U.mieDirectionalG.value = 0.8;
     this.envScene = new THREE.Scene(); this.envScene.add(this.sky);
     this.pm = new THREE.PMREMGenerator(R);
-    scene.fog = new THREE.Fog(0xbcd3ea, 500, 2600);
+    scene.fog = null; // atmosphere is a post pass (height fog + god rays)
+    this.fogColor = new THREE.Color();
 
     // lights
     const s = this.sun = new THREE.DirectionalLight(0xfff0d8, 4.5); s.castShadow = true;
@@ -87,6 +99,7 @@ export class LevelLighting {
     this.sao = { uH: { value: null }, uBox: { value: new THREE.Vector4() }, uMinY: { value: 0 }, uYs: { value: 1 }, uR: { value: 4 }, uStr: { value: 0.7 } };
     this.hRT = new THREE.WebGLRenderTarget(o.aoMapSize, o.aoMapSize, { type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
     this.sao.uH.value = this.hRT.texture;
+    this.lumina = new Lumina(R, this.sao);
     this.hMat = new THREE.ShaderMaterial({
       side: THREE.DoubleSide, uniforms: { y0: this.sao.uMinY, ys: this.sao.uYs },
       vertexShader: `uniform float y0,ys;varying float h;void main(){vec4 w=vec4(position,1.);
@@ -107,20 +120,64 @@ export class LevelLighting {
     ssao.render = (...a) => { // keep thin / transparent helpers out of the normal pass
       const h = [], hide = (x) => { if (x.visible) { x.visible = false; h.push(x); } };
       scene.traverse((x) => { if (x.isPoints || x.isSprite || (x.material && !Array.isArray(x.material) && (x.material.transparent || x.material.alphaTest > 0 || x.material.colorWrite === false))) hide(x); });
-      hide(this.dome); R.shadowMap.autoUpdate = false; base(...a); R.shadowMap.autoUpdate = true; h.forEach((x) => (x.visible = true));
+      hide(this.dome); R.shadowMap.autoUpdate = false;
+      if (this.params.ssao) base(...a);
+      else { // depth/normal only, pass the image through
+        const [renderer, writeBuffer, readBuffer] = a;
+        ssao.overrideVisibility(); ssao.renderOverride(renderer, ssao.normalMaterial, ssao.normalRenderTarget, 0x7777ff, 1.0); ssao.restoreVisibility();
+        ssao.copyMaterial.uniforms.tDiffuse.value = readBuffer.texture; ssao.copyMaterial.blending = THREE.NoBlending;
+        ssao.renderPass(renderer, ssao.copyMaterial, writeBuffer);
+      }
+      R.shadowMap.autoUpdate = true; h.forEach((x) => (x.visible = true));
     };
+    // atmosphere: analytic height fog + god rays marched through Lumina's shadow-height map
+    this.atmo = new ShaderPass({
+      uniforms: {
+        tDiffuse: { value: null }, tDepth: { value: null }, uLmS: { value: null }, uBox: { value: null }, // linked after ShaderPass clones
+        uInvProj: { value: new THREE.Matrix4() }, uCamWorld: { value: new THREE.Matrix4() }, uCamPos: { value: new THREE.Vector3() },
+        uSunDir: { value: new THREE.Vector3() }, uSunCol: { value: new THREE.Vector3() }, uFogCol: { value: new THREE.Vector3() },
+        uDens: { value: 0.0016 }, uFall: { value: 70 }, uRay: { value: 1 }, uFrame: { value: 0 }, uTopY: { value: 200 },
+      }, vertexShader: VS,
+      fragmentShader: `uniform sampler2D tDiffuse,tDepth,uLmS;uniform vec4 uBox;uniform mat4 uInvProj,uCamWorld;uniform vec3 uCamPos,uSunDir,uSunCol,uFogCol;
+        uniform float uDens,uFall,uRay,uFrame,uTopY;varying vec2 v;
+        float lit(vec3 p){vec2 uv=vec2((p.x-uBox.x)/uBox.z,(uBox.y-p.z)/uBox.w);if(p.y>uTopY||uv.x<0.||uv.y<0.||uv.x>1.||uv.y>1.)return 1.;
+          float S=texture2D(uLmS,uv).r;return smoothstep(S-1.,S+1.,p.y);}
+        void main(){vec4 c=texture2D(tDiffuse,v);float z=texture2D(tDepth,v).r;
+          vec4 vp=uInvProj*vec4(v*2.-1.,z*2.-1.,1.);vp/=vp.w;vec3 wp=(uCamWorld*vec4(vp.xyz,1.)).xyz;
+          vec3 rd=wp-uCamPos;float dist=length(rd);rd/=dist;bool sky=z>.99999;if(sky)dist=2500.;
+          float k=rd.y/uFall,y0=max(uCamPos.y,0.);
+          float od=uDens*exp(-y0/uFall)*(abs(k)>1e-5?(1.-exp(-k*dist))/k:dist);
+          float T=exp(-od);
+          float mu=dot(rd,uSunDir),g=.62,ph=(1.-g*g)/(12.566*pow(1.+g*g-2.*g*mu,1.5));
+          float L=min(dist,320.),acc=0.,ws=0.,j=fract(52.9829189*fract(dot(gl_FragCoord.xy+uFrame*5.588,vec2(.06711056,.00583715))));
+          for(int i=0;i<20;i++){float t=(float(i)+j)/20.*L;vec3 q=uCamPos+rd*t;float w=exp(-max(q.y,0.)/uFall);acc+=lit(q)*w;ws+=w;}
+          float litF=(acc/max(ws,1e-4)*L+max(dist-L,0.))/dist;
+          vec3 ins=uFogCol+uSunCol*ph*litF*uRay*3.;
+          c.rgb=c.rgb*T+ins*(1.-T);gl_FragColor=c;}`,
+    });
+    comp.addPass(this.atmo);
     this.bounceP = new ShaderPass({
       uniforms: { tDiffuse: { value: null }, px: { value: new THREE.Vector2(1 / (sz.x * pr), 1 / (sz.y * pr)) }, bounce: { value: 0.6 } }, vertexShader: VS,
       fragmentShader: 'uniform sampler2D tDiffuse;uniform vec2 px;uniform float bounce;varying vec2 v;void main(){vec4 c=texture2D(tDiffuse,v);vec3 a=vec3(0.);float w=0.;for(int i=0;i<16;i++){float f=float(i)+.5;float t=f*2.39996;vec2 o=vec2(cos(t),sin(t))*sqrt(f/16.)*90.*px;vec3 s=texture2D(tDiffuse,v+o).rgb;float k=1.+dot(s,vec3(.33));a+=s*k;w+=k;}a/=w;float l=dot(c.rgb,vec3(.2126,.7152,.0722));float sh=1.-smoothstep(.05,.7,l);c.rgb+=a*bounce*sh*(c.rgb+.15);gl_FragColor=c;}',
     });
-    comp.addPass(this.bounceP);
+    comp.addPass(this.bounceP); this.bounceP.enabled = false;
     this.bloom = new UnrealBloomPass(new THREE.Vector2(sz.x, sz.y), 0.25, 0.5, 0.9); comp.addPass(this.bloom);
     this.smaa = new SMAAPass(sz.x * pr, sz.y * pr); comp.addPass(this.smaa);
     this.grade = new ShaderPass({
-      uniforms: { tDiffuse: { value: null }, sat: { value: 1.15 }, night: this.uniforms.uNight }, vertexShader: VS,
-      fragmentShader: 'uniform sampler2D tDiffuse;uniform float sat,night;varying vec2 v;void main(){vec4 c=texture2D(tDiffuse,v);float d=distance(v,vec2(.5));c.rgb*=smoothstep(.95,.35,d)*.4+.6;float l=dot(c.rgb,vec3(.2126,.7152,.0722));float k=smoothstep(0.,.6,l);c.rgb=mix(vec3(l),c.rgb,sat*(1.+.1*(1.-k)));c.rgb*=mix(mix(vec3(1.06,.97,.86),vec3(.85,.95,1.15),night),vec3(1.03,1.,.95),k);c.rgb=(c.rgb-.18)*1.1+.18;gl_FragColor=vec4(max(c.rgb,0.),c.a);}',
+      uniforms: { tDiffuse: { value: null }, sat: { value: 1.15 }, night: this.uniforms.uNight, tDepth: { value: null },
+        uSunUV: { value: new THREE.Vector3() }, uSunCol: { value: new THREE.Vector3() }, uGlare: { value: 1 }, uAspect: { value: 1 } }, vertexShader: VS,
+      fragmentShader: 'uniform sampler2D tDiffuse,tDepth;uniform float sat,night,uGlare,uAspect;uniform vec3 uSunUV,uSunCol;varying vec2 v;'
+        + 'vec3 glare(){if(uSunUV.z<=0.||uGlare<=0.)return vec3(0.);float vis=0.;for(int i=0;i<9;i++){vec2 o=vec2(float(i%3)-1.,float(i/3)-1.)*.012;vis+=step(.99999,texture2D(tDepth,uSunUV.xy+o).r);}vis/=9.;if(vis<=0.)return vec3(0.);'
+        + 'vec2 d=(v-uSunUV.xy)*vec2(uAspect,1.);float r=length(d);vec3 g=uSunCol*(exp(-r*9.)*.35+exp(-r*2.5)*.08+exp(-abs(d.y)*260.)*exp(-abs(d.x)*3.)*.12);'
+        + 'vec2 axis=vec2(.5)-uSunUV.xy;for(int k=1;k<4;k++){vec2 gp=uSunUV.xy+axis*(float(k)*.55);float gr=length((v-gp)*vec2(uAspect,1.));g+=uSunCol*vec3(.35,.5,.8)*smoothstep(.05,.0,abs(gr-.03*float(k)))*.04;}'
+        + 'return g*vis*uSunUV.z*uGlare;}'
+        + 'void main(){vec4 c=texture2D(tDiffuse,v);c.rgb+=glare();float d=distance(v,vec2(.5));c.rgb*=smoothstep(.95,.35,d)*.4+.6;float l=dot(c.rgb,vec3(.2126,.7152,.0722));float k=smoothstep(0.,.6,l);c.rgb=mix(vec3(l),c.rgb,sat*(1.+.1*(1.-k)));c.rgb*=mix(mix(vec3(1.06,.97,.86),vec3(.85,.95,1.15),night),vec3(1.03,1.,.95),k);c.rgb=(c.rgb-.18)*1.1+.18;gl_FragColor=vec4(max(c.rgb,0.),c.a);}',
     });
     comp.addPass(this.grade); comp.addPass(new OutputPass());
+    // ShaderPass clones uniforms (render-target textures become null, shared objects get copied): re-link them
+    const depth = ssao.normalRenderTarget.depthTexture;
+    this.atmo.uniforms.tDepth.value = depth; this.atmo.uniforms.uLmS.value = this.lumina.S.texture; this.atmo.uniforms.uBox = this.sao.uBox;
+    this.grade.uniforms.tDepth.value = depth; this.grade.uniforms.night = this.uniforms.uNight;
 
     this.setTime(this.params.time);
   }
@@ -128,7 +185,7 @@ export class LevelLighting {
   /* ---------- public API ---------- */
   /** Patch a MeshStandardMaterial-derived shader with contact AO (call from onBeforeCompile). */
   injectSAO(shader) {
-    Object.assign(shader.uniforms, this.sao);
+    Object.assign(shader.uniforms, this.sao, this.lumina.u);
     shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vSaoP;varying vec3 vSaoN;')
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         { vec4 sp=vec4(transformed,1.);vec3 sn=objectNormal;
@@ -136,7 +193,10 @@ export class LevelLighting {
         sp=instanceMatrix*sp;sn=mat3(instanceMatrix)*sn;
         #endif
         vSaoP=(modelMatrix*sp).xyz;vSaoN=normalize(mat3(modelMatrix)*sn);}`);
-    shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vSaoP;varying vec3 vSaoN;\n' + SAO_GLSL)
+    shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vSaoP;varying vec3 vSaoN;\n' + SAO_GLSL + LUMINA_GLSL)
+      .replace('#include <lights_fragment_begin>', THREE.ShaderChunk.lights_fragment_begin.replace('vDirectionalShadowCoord[ i ] ) : 1.0;',
+        'vDirectionalShadowCoord[ i ] ) : 1.0;\n\t\tdirectLight.color *= ( directLight.visible && receiveShadow ) ? lmFarShadow( vDirectionalShadowCoord[ i ], vSaoP, normalize( vSaoN ) ) : 1.0;'))
+      .replace('#include <lights_fragment_maps>', '#include <lights_fragment_maps>\n' + LUMINA_APPLY)
       .replace('#include <opaque_fragment>', 'outgoingLight*=saoC(vSaoP,normalize(vSaoN));\n#include <opaque_fragment>');
   }
   /** Patch plain standard materials (props) with contact AO. */
@@ -188,7 +248,7 @@ export class LevelLighting {
     const top = dayTop.clone().lerp(setTop, golden).lerp(nTop, night), hor = dayHor.clone().lerp(setHor, golden).lerp(nHor, night);
     this.domeU.uTop.value.copy(top); this.domeU.uHor.value.copy(hor);
     this.domeU.uSun.value.copy(sunDir); this.domeU.uSunCol.value.copy(sunCol);
-    this.scene.fog.color.copy(hor).multiplyScalar(0.75);
+    this.fogColor.copy(hor).multiplyScalar(0.75);
 
     if (this.skyEnv) this.skyEnv.dispose();
     this.skyEnv = this.pm.fromScene(this.envScene);
@@ -201,7 +261,11 @@ export class LevelLighting {
   syncCamera() {
     for (const m of [this.ssao.ssaoMaterial, this.ssao.depthRenderMaterial]) { m.uniforms.cameraNear.value = this.cam.near; m.uniforms.cameraFar.value = this.cam.far; }
   }
-  rebuild() { this._buildSAO(); this.lastProbe.set(1e9, 0, 0); }
+  rebuild() {
+    this._buildSAO(); this.lumina.rebuild(); this.lumina.updateSun(this.sv, true);
+    this.lumina.updateCaches(this.cam.position, true); // complete gather once; later updates are progressive
+    this.lastProbe.set(1e9, 0, 0);
+  }
   resize(w, h) {
     this.comp.setSize(w, h); const pr = this.R.getPixelRatio();
     this.bounceP.uniforms.px.value.set(1 / (w * pr), 1 / (h * pr));
@@ -211,13 +275,35 @@ export class LevelLighting {
     R.toneMappingExposure = p.exposure * (1 + n * 0.9);
     this.bloom.strength = p.bloom * (1 + n * 1.6); this.bloom.threshold = THREE.MathUtils.lerp(0.9, 0.6, n);
     this.grade.uniforms.sat.value = p.saturation;
-    this.bounceP.uniforms.bounce.value = p.bounce; this.sao.uStr.value = p.contactAO; this.ssao.enabled = p.ssao;
+    this.bounceP.uniforms.bounce.value = p.bounce; this.bounceP.enabled = p.bounce > 0; this.sao.uStr.value = p.contactAO;
+    this._updateLumina(dt);
     this.dome.position.copy(cam.position); this.dome.scale.setScalar(cam.far * 0.8 / 500);
     this._fitShadow();
     this._probeT += dt;
     if (p.probe && this._probeT > this.opts.probeInterval && cam.position.distanceTo(this.lastProbe) > this.opts.probeDistance) this._probe();
     if (!p.probe && this.probeEnv) { this.probeEnv.dispose(); this.probeEnv = null; this.scene.environment = this.skyEnv.texture; }
     this.comp.render();
+  }
+
+  _updateLumina(dt) {
+    const p = this.params, Lm = this.lumina, u = Lm.u, cam = this.cam, n = this.uniforms.uNight.value;
+    u.uLmOn.value = p.lumina ? 1 : 0; u.uLmGI.value = p.gi; u.uLmSpec.value = p.spec;
+    // with Lumina the analytic fill lights are replaced by traced sky + bounce
+    this.hemi.visible = this.amb.visible = !p.lumina;
+    Lm.setLighting(this.sv, this.sun.color, this.sun.intensity, this.domeU.uTop.value, this.domeU.uHor.value, n);
+    if (p.lumina) { Lm.updateSun(this.sv); Lm.updateCaches(cam.position); }
+    this.domeU.uClouds.value = p.clouds; this.domeU.uTime.value += dt;
+    // atmosphere
+    const A = this.atmo.uniforms; this.atmo.enabled = p.fog > 0;
+    A.uInvProj.value.copy(cam.projectionMatrixInverse); A.uCamWorld.value.copy(cam.matrixWorld); A.uCamPos.value.copy(cam.position);
+    A.uSunDir.value.copy(this.sv); A.uSunCol.value.copy(u.uLmSunE.value).multiplyScalar(n > 0.5 ? 0.05 : 0.07);
+    const hor = this.domeU.uHor.value; A.uFogCol.value.set(hor.r, hor.g, hor.b).multiplyScalar(0.5).lerp(u.uLmSunE.value.clone().multiplyScalar(0.09), 0.35);
+    A.uDens.value = 0.0008 * p.fog; A.uRay.value = p.lumina ? p.godRays : 0; A.uFrame.value = (A.uFrame.value + 1) % 64; A.uTopY.value = u.uLmTopY.value;
+    // sun glare
+    const G = this.grade.uniforms, sp = this.sv.clone().multiplyScalar(1000).add(cam.position).project(cam);
+    const on = sp.z < 1 && Math.abs(sp.x) < 1.2 && Math.abs(sp.y) < 1.2 && this.sv.dot(cam.getWorldDirection(new THREE.Vector3())) > 0;
+    G.uSunUV.value.set(sp.x * 0.5 + 0.5, sp.y * 0.5 + 0.5, on ? (1 - n) * THREE.MathUtils.smoothstep(this.sunEl, -1, 6) : 0);
+    G.uSunCol.value.copy(u.uLmSunE.value).multiplyScalar(0.12); G.uGlare.value = p.glare; G.uAspect.value = cam.aspect;
   }
 
   /* ---------- internals ---------- */

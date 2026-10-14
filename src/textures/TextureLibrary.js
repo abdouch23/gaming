@@ -98,6 +98,14 @@ export class TextureLibrary {
       for (const job of jobs) handle(job, await this._runSync(job));
     }
 
+    // average linear albedo per layer (Lumina's surface cache)
+    const lin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+    this.avgAlbedo = [];
+    for (let l = 0; l < LAYER_COUNT; l++) {
+      const off = l * size * size * 4, n = size * size, s = [0, 0, 0]; let k = 0;
+      for (let i = 0; i < n; i += 97) { const j = off + i * 4; s[0] += lin(albData[j]); s[1] += lin(albData[j + 1]); s[2] += lin(albData[j + 2]); k++; }
+      this.avgAlbedo.push(s.map((x) => x / k));
+    }
     this._install(size, albData, nrmData, grimeData);
     this.genMs = performance.now() - t0;
     return this;

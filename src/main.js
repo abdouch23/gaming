@@ -108,6 +108,7 @@ function buildCity() {
   lighting.level.add(city.group); scene.add(city.far);
   demolition = new Demolition(lighting.level, city, mats, effects, lighting);
   lighting.setBounds(city.bounds);
+  lighting.lumina.setCity(layout);
   lighting.rebuild();
   fps.setWorld(city, demolition);
   drawMinimap(true);
@@ -161,6 +162,8 @@ async function generateTextures(size) {
   const ld = $('loading'); ld.classList.remove('hide');
   $('loadLabel').textContent = `توليد الخامات PBR بدقة ${size}×${size}…`;
   await lib.generate(size, 1, (f) => { $('loadBar').style.width = (f * 100).toFixed(1) + '%'; });
+  lighting.lumina.setAlbedo(lib.avgAlbedo);
+  lighting.rebuild();
   ld.classList.add('hide');
   updateVRAM();
 }
@@ -302,6 +305,24 @@ bindRange('bounce', (v) => (lighting.params.bounce = v));
 $('ssao').addEventListener('change', (e) => (lighting.params.ssao = e.target.checked));
 $('probe').addEventListener('change', (e) => (lighting.params.probe = e.target.checked));
 bindRange('weather', (v) => (mats.u.uWeather.value = v));
+for (const k of ['gi', 'spec', 'godRays', 'fog', 'clouds', 'glare']) bindRange(k, (v) => (lighting.params[k] = v));
+$('lumina').addEventListener('change', (e) => (lighting.params.lumina = e.target.checked));
+$('pom').addEventListener('change', (e) => (mats.u.uPomOn.value = e.target.checked ? 1 : 0));
+$('farSh').addEventListener('change', (e) => (lighting.lumina.u.uLmFarSh.value = e.target.checked ? 1 : 0));
+// scalability presets: Lumina ranges / steps, POM, shadow resolution, SSAO
+const QUALITY = {
+  low: { steps: 6, near: 60, mid: 220, pom: 0, shadow: 2048, ssao: false },
+  medium: { steps: 8, near: 100, mid: 320, pom: 1, shadow: 2048, ssao: true },
+  high: { steps: 10, near: 140, mid: 450, pom: 1, shadow: 4096, ssao: true },
+  epic: { steps: 14, near: 220, mid: 700, pom: 1, shadow: 4096, ssao: true },
+};
+$('quality').addEventListener('change', (e) => {
+  const q = QUALITY[e.target.value], u = lighting.lumina.u, sun = lighting.sun;
+  u.uLmSteps.value = q.steps; u.uLmNear.value = q.near; u.uLmMid.value = q.mid;
+  mats.u.uPomOn.value = q.pom; $('pom').checked = !!q.pom;
+  lighting.params.ssao = q.ssao; $('ssao').checked = q.ssao;
+  if (sun.shadow.mapSize.x !== q.shadow) { sun.shadow.mapSize.set(q.shadow, q.shadow); lighting.opts.shadowMap = q.shadow; if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } }
+});
 bindRange('wet', (v) => (mats.u.uWet.value = v));
 bindRange('detail', (v) => (mats.u.uDetail.value = v));
 bindRange('wind', (v) => city && (city.trees.uniforms.uWind.value = v));
@@ -392,4 +413,4 @@ function frame() {
 })();
 
 // debug / automation handle
-window.__city = { fps, toggleWalk, keys, get city() { return city; }, get demolition() { return demolition; }, lighting, camera, controls, lib, mats, params, setTool, select, buildCity, syncParamUI, pick: (r) => pick(r) };
+window.__city = { renderer, fps, toggleWalk, keys, get city() { return city; }, get demolition() { return demolition; }, lighting, camera, controls, lib, mats, params, setTool, select, buildCity, syncParamUI, pick: (r) => pick(r) };
