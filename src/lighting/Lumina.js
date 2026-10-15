@@ -25,7 +25,7 @@ import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { L } from '../materials/layers.js';
 
 export const LM_TH = [0.6, 3, 7, 12, 20, 35, 60, 110];
-const OCC_RES = 2048, LIT_RES = 1024, ALB_RES = 1024;
+const OCC_RES = 2048, LIT_RES = 1024, S_RES = 2048, ALB_RES = 1024;
 const NEAR_N = 96, NEAR_CELL = 1.25, FAR_N = 192, DIRS = 5, LAYERS = 12;
 
 // radiance cache generation: one texel = irradiance for (cell, height layer, normal direction)
@@ -193,8 +193,13 @@ vec3 lmGI(vec3 P, vec3 N) {
 float lmSunVis(vec3 P, vec3 N) {
   vec3 q = P + N * 1.2; vec2 uv = lmUV(q.xz);
   if (lmOut(uv)) return 1.;
-  float S = texture2D(uLmS, uv).r;
-  return smoothstep(S - .9, S + .9, q.y);
+  // 4 rotated-grid taps: smooth penumbra instead of blocky texel steps
+  float t = 1. / ${S_RES}., vis = 0.;
+  vis += smoothstep(-.8, .8, q.y - texture2D(uLmS, uv + vec2(-.25, -.75) * t).r);
+  vis += smoothstep(-.8, .8, q.y - texture2D(uLmS, uv + vec2(.75, -.25) * t).r);
+  vis += smoothstep(-.8, .8, q.y - texture2D(uLmS, uv + vec2(.25, .75) * t).r);
+  vis += smoothstep(-.8, .8, q.y - texture2D(uLmS, uv + vec2(-.75, .25) * t).r);
+  return vis * .25;
 }
 // fades from the shadow map to the height-field shadows at the edge of the shadow frustum
 float lmFarShadow(vec4 sc, vec3 P, vec3 N) {
@@ -227,7 +232,7 @@ export class Lumina {
       rt.texture.generateMipmaps = mip; return rt;
     };
     this.occA = mk(OCC_RES); this.occB = mk(OCC_RES);
-    this.S = mk(LIT_RES, THREE.HalfFloatType, false);
+    this.S = mk(S_RES, THREE.HalfFloatType, false);
     this.litA = mk(LIT_RES); this.litB = mk(LIT_RES);
     const canvasTex = () => {
       const c = document.createElement('canvas'); c.width = c.height = ALB_RES;

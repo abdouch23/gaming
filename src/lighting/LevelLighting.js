@@ -16,6 +16,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Lumina, LUMINA_GLSL, LUMINA_APPLY } from './Lumina.js';
 import { AutoExposurePass } from './AutoExposure.js';
+import { TAAPass } from './TAA.js';
 
 const VS = 'varying vec2 v;void main(){v=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}';
 
@@ -39,7 +40,7 @@ export class LevelLighting {
     this.params = {
       exposure: 1, autoExposure: true, bloom: 0.3, saturation: 1.2, bounce: 0, contactAO: 0.45, ssao: false, probe: false,
       time: 17.0, sunAzOffset: 0, shadowRadius: 220,
-      lumina: true, gi: 1, spec: 1, fog: 1, godRays: 1, glare: 1, clouds: 1,
+      aa: 'taa', sharpen: 0.35, lumina: true, gi: 1, spec: 1, fog: 1, godRays: 1, glare: 1, clouds: 1,
     };
     this.uniforms = { uNight: { value: 0 } }; // shared with city materials
     R.shadowMap.enabled = true; R.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -157,6 +158,8 @@ export class LevelLighting {
           c.rgb=c.rgb*T+ins*(1.-T);gl_FragColor=c;}`,
     });
     comp.addPass(this.atmo);
+    // TAA on the HDR image after fog, before exposure / bloom (stable input for bloom)
+    this.taa = new TAAPass(cam, ssao.normalRenderTarget.depthTexture); comp.addPass(this.taa);
     this.autoExp = new AutoExposurePass(); comp.addPass(this.autoExp);
     this.bounceP = new ShaderPass({
       uniforms: { tDiffuse: { value: null }, px: { value: new THREE.Vector2(1 / (sz.x * pr), 1 / (sz.y * pr)) }, bounce: { value: 0.6 } }, vertexShader: VS,
@@ -289,7 +292,11 @@ export class LevelLighting {
     this._probeT += dt;
     if (p.probe && this._probeT > this.opts.probeInterval && cam.position.distanceTo(this.lastProbe) > this.opts.probeDistance) this._probe();
     if (!p.probe && this.probeEnv) { this.probeEnv.dispose(); this.probeEnv = null; this.scene.environment = this.skyEnv.texture; }
+    const taa = p.aa === 'taa';
+    this.taa.enabled = taa; this.smaa.enabled = p.aa === 'smaa'; this.taa.su.uSharp.value = p.sharpen;
+    if (taa) { R.getDrawingBufferSize(this._dbs || (this._dbs = new THREE.Vector2())); this.taa.begin(this._dbs.x, this._dbs.y); }
     this.comp.render();
+    if (taa) this.taa.end(); else this.taa.reset();
   }
 
   _updateLumina(dt) {
@@ -325,7 +332,7 @@ export class LevelLighting {
     s.target.position.copy(c);
     const far = r * 2 + 600;
     Object.assign(s.shadow.camera, { left: -r, right: r, top: r, bottom: -r, near: 1, far });
-    s.shadow.camera.updateProjectionMatrix(); s.shadow.normalBias = r * 0.0002;
+    s.shadow.camera.updateProjectionMatrix(); s.shadow.normalBias = texel * 1.6; // scales with shadow texel size (acne at wide frusta)
     s.position.copy(this.sv).multiplyScalar(far * 0.5).add(c);
     s.target.updateMatrixWorld();
   }

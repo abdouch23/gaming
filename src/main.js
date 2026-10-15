@@ -111,7 +111,7 @@ function buildCity() {
   lighting.setBounds(city.bounds);
   lighting.lumina.setCity(layout);
   lighting.rebuild();
-  lighting.resetExposure();
+  lighting.resetExposure(); lighting.taa.reset();
   fps.setWorld(city, demolition);
   drawMinimap(true);
   console.info(`city: ${layout.buildings.length} buildings, ${layout.trees.length} trees in ${(performance.now() - t0).toFixed(0)} ms`);
@@ -306,6 +306,8 @@ bindRange('saturation', (v) => (lighting.params.saturation = v));
 bindRange('contactAO', (v) => (lighting.params.contactAO = v));
 bindRange('bounce', (v) => (lighting.params.bounce = v));
 $('ssao').addEventListener('change', (e) => (lighting.params.ssao = e.target.checked));
+$('aa').addEventListener('change', (e) => { lighting.params.aa = e.target.value; lighting.taa.reset(); });
+bindRange('sharpen', (v) => (lighting.params.sharpen = v));
 $('probe').addEventListener('change', (e) => (lighting.params.probe = e.target.checked));
 bindRange('weather', (v) => (mats.u.uWeather.value = v));
 for (const k of ['gi', 'spec', 'godRays', 'fog', 'clouds', 'glare']) bindRange(k, (v) => (lighting.params[k] = v));
@@ -392,6 +394,9 @@ function frame() {
   if (state.cycle) { const t = (lighting.params.time + dt * 0.4) % 24; $('time').value = t; $('timeVal').textContent = fmtTime(t); lighting.setTime(t); }
 
   // interiors seen through windows by day scale with daylight (keeps them plausible under auto exposure)
+  // TAA integrates a rotating LOD dither; without it, switch LODs per pixel at a hard distance (no stipple)
+  mats.u.uTaaFrame.value = lighting.taa.frame % 64;
+  mats.u.uLodBand.value = lighting.params.aa === 'taa' ? 40 : 0.01;
   mats.u.uDay.value = THREE.MathUtils.clamp(0.06 * lighting.sun.intensity, 0.03, 0.3);
   if (fps.active) { // tight, sharp shadow box ahead of the player
     lighting.params.shadowRadius = 75;

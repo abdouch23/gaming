@@ -64,7 +64,7 @@ const FRAG_DECL = /* glsl */`
 precision highp sampler2DArray;
 uniform sampler2DArray uAlb, uNrm; uniform sampler2D uGrime;
 uniform float uTile[16], uMetal[16], uAnti[16];
-uniform float uWeather, uDay, uNormalStr, uNight, uWet, uDetail, uPom[16], uPomOn, uLodDist, uLodBand;
+uniform float uTaaFrame, uWeather, uDay, uNormalStr, uNight, uWet, uDetail, uPom[16], uPomOn, uLodDist, uLodBand;
 flat varying float cLayer; flat varying vec4 cFacade; flat varying float cSeed;
 varying vec2 cUv; varying vec3 cTint; varying vec3 cWP; varying vec3 cWN;
 ` + COMMON_GLSL;
@@ -79,7 +79,8 @@ float wRough, wMetal, wAO; vec3 wN, wEmis = vec3(0.);
   #if defined(LOD_DETAIL) || defined(LOD_FADEOUT)
   { // dithered cross-fade between LOD0 and LOD1 (complementary per pixel, no popping)
     float x = clamp((camD - (uLodDist - uLodBand)) / uLodBand, 0., 1.);
-    float n = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(.06711056, .00583715))));
+    // interleaved gradient noise, rotated every frame so TAA integrates it into a smooth blend
+    float n = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(.06711056, .00583715))) + uTaaFrame * .61803);
     #ifdef LOD_DETAIL
     if (n < x) discard;
     #else
@@ -207,21 +208,31 @@ float wRough, wMetal, wAO; vec3 wN, wEmis = vec3(0.);
     float wetV = uWet * vert * (.35 + .65 * gS.r); alb *= mix(1., .75, wetV); wRough = mix(wRough, wRough * .6, wetV);
   }
 
-  // ---- procedural windows for LOD and debris facades (cFacade.w > 0)
+  // ---- procedural windows for LOD and debris facades (cFacade.w > 0), pre-filtered:
+  // edges are anti-aliased over one pixel footprint, and when the window grid approaches pixel size the
+  // pattern fades into its average (frequency clamping) instead of producing moire.
+  vec2 fwF = fwidth(fuv); float pxm = max(max(fwF.x, fwF.y), 1e-4); // metres per pixel (uniform control flow)
   if (cFacade.w > .5 && vert > .9) {
     vec2 cuv, cid, ws; float edge;
-    float m = facadeWindow(fuv, cFacade, cuv, cid, ws, edge);
-    if (m > .5) {
-      if (edge < .06) { alb = vec3(.05); wRough = .45; wMetal = .6; wN = vec3(0., 0., 1.); }
-      else {
-        vec3 T = normalize(cross(vec3(0., 1., 0.), N)), V = normalize(cameraPosition - cWP);
-        vec3 vT = vec3(dot(V, T), V.y, dot(V, N));
-        float mirror = cFacade.w > 2.5 ? .55 : 0.;
-        wEmis = interiorRoom(cuv, vT, h31(vec3(cid, cSeed)), ws, uNight) * (1. - mirror * .8);
-        alb = mix(vec3(.02), vec3(.1, .16, .22), mirror); wRough = .07; wMetal = mirror * .85; wN = vec3(0., 0., 1.); wAO = 1.;
-      }
-    } else if (edge > -.14) { float k = clamp(-edge / .14, 0., 1.); alb *= mix(.55, 1., k); wAO *= mix(.7, 1., k); } // reveal shadow
+    facadeWindow(fuv, cFacade, cuv, cid, ws, edge);
+    float rowH = cid.y < .5 ? cFacade.z : cFacade.y;
+    float farF = smoothstep(.1, .35, pxm / min(cFacade.x, rowH));
+    float cov = mix(smoothstep(-pxm, pxm, edge), ws.x * ws.y / (cFacade.x * rowH), farF);
+    float frameK = mix(1. - smoothstep(.06 - pxm, .06 + pxm, edge), .22, farF);
+    vec3 T = normalize(cross(vec3(0., 1., 0.), N)), V = normalize(cameraPosition - cWP);
+    vec3 vT = vec3(dot(V, T), V.y, dot(V, N));
+    float mirror = cFacade.w > 2.5 ? .55 : 0.;
+    vec3 gE = interiorRoom(mix(clamp(cuv, 0., 1.), vec2(.5), farF), vT, h31(vec3(cid, cSeed)), ws, uNight) * (1. - mirror * .8);
+    vec3 gA = mix(mix(vec3(.02), vec3(.1, .16, .22), mirror), vec3(.05), frameK);
+    float gR = mix(.07, .45, frameK), gM = mix(mirror * .85, .6, frameK);
+    float rv = (1. - farF) * (1. - clamp(-edge / .14, 0., 1.)) * (1. - cov); // reveal shadow around the opening
+    alb *= mix(1., .55, rv); wAO *= mix(1., .7, rv);
+    alb = mix(alb, gA, cov); wRough = mix(wRough, gR, cov); wMetal = mix(wMetal, gM, cov);
+    wN = normalize(mix(wN, vec3(0., 0., 1.), cov)); wAO = mix(wAO, 1., cov);
+    wEmis = gE * cov * (1. - frameK);
   }
+  // specular anti-aliasing: normal-map variance across the pixel raises roughness (no sparkle at distance)
+  { vec3 dn = fwidth(wN); wRough = sqrt(clamp(wRough * wRough + min(dot(dn, dn) * 2., .25), 0., 1.)); }
   diffuseColor.rgb *= alb;
 }
 `;
@@ -238,7 +249,7 @@ export class CityMaterials {
       uAlb: { value: null }, uNrm: { value: null }, uGrime: { value: null },
       uTile: { value: pad16((d) => d.meters) }, uMetal: { value: pad16((d) => d.metal) }, uAnti: { value: pad16((d) => d.anti) },
       uWeather: { value: 0.5 }, uDay: { value: 0.6 }, uNormalStr: { value: 1.0 }, uNight: lighting.uniforms.uNight, uWet: { value: 0 }, uDetail: { value: 1 },
-      uPom: { value: pad16((d) => d.pom || 0) }, uPomOn: { value: 1 }, uLodDist: { value: 320 }, uLodBand: { value: 40 },
+      uTaaFrame: { value: 0 }, uPom: { value: pad16((d) => d.pom || 0) }, uPomOn: { value: 1 }, uLodDist: { value: 320 }, uLodBand: { value: 40 },
     };
     lib.onChange((l) => { this.u.uAlb.value = l.alb; this.u.uNrm.value = l.nrm; this.u.uGrime.value = l.grime; });
     this.world = this._world();
