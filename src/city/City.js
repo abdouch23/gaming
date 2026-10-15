@@ -2,11 +2,14 @@
 // time budget), instant building removal (index ranges collapse), ray picking and static colliders.
 import * as THREE from 'three';
 import { GeoBuilder } from './GeoBuilder.js';
-import { buildSimple, buildDetailed, makeBuilding } from './BuildingGenerator.js';
+import { buildSimple, buildDetailed, buildShadowProxy, makeBuilding } from './BuildingGenerator.js';
 import { buildGround, buildFarGround, StreetProps } from './Streets.js';
 import { Trees } from './Trees.js';
 
 const CHUNK_M = 190; // chunk cell size (metres)
+// Shadow-only proxy material. three r160's shadow pass tests layers against the main camera, so the
+// proxy stays on layer 0 and is invisible in normal passes (no colour, no depth; SSAO/AO skip it).
+const proxyMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
 
 export class City {
   constructor(layout, materials, lib, lighting) {
@@ -50,14 +53,21 @@ export class City {
   }
 
   _buildSimple(ch) {
-    const G = new GeoBuilder(8192);
+    const G = new GeoBuilder(8192), S = new GeoBuilder(2048);
     for (const b of ch.buildings) {
-      const i0 = G.ni; if (!b.demolished) buildSimple(b, G); b.rSimple = [i0, G.ni - i0];
+      const i0 = G.ni, s0 = S.ni;
+      if (!b.demolished) { buildSimple(b, G); buildShadowProxy(b, S); }
+      b.rSimple = [i0, G.ni - i0]; b.rShadow = [s0, S.ni - s0];
     }
     if (ch.simple) { this.group.remove(ch.simple); ch.simple.geometry.dispose(); }
+    if (ch.shadow) { this.group.remove(ch.shadow); ch.shadow.geometry.dispose(); }
     const m = new THREE.Mesh(G.build(), this.mats.world);
-    m.castShadow = m.receiveShadow = true; m.userData.chunk = ch;
+    m.castShadow = false; m.receiveShadow = true; m.userData.chunk = ch;
     ch.simple = m; this.group.add(m);
+    // solid shadow caster for the whole chunk, independent of which visual LOD is shown
+    const sh = new THREE.Mesh(S.build(), proxyMat);
+    sh.castShadow = true; sh.receiveShadow = false; sh.userData.noAO = true;
+    ch.shadow = sh; this.group.add(sh);
   }
 
   _startDetail(ch) { ch.job = { G: new GeoBuilder(1 << 16), Gg: new GeoBuilder(1 << 14), k: 0 }; }
@@ -100,7 +110,6 @@ export class City {
       if (ch.detail) ch.detail.visible = showDetail;
       ch.simple.visible = !showDetail || far > lod - band;
       ch.simple.material = showDetail ? this.mats.worldFadeOut : this.mats.world;
-      ch.simple.castShadow = !showDetail; // LOD0 casts the whole chunk's shadow
       if (showDetail) n++;
     }
     this.stats.detailChunks = n; this.stats.building = this.chunks.filter((c) => c.job).length;
@@ -115,7 +124,7 @@ export class City {
       if (!mesh || !r || !r[1]) return;
       mesh.geometry.index.array.fill(0, r[0], r[0] + r[1]); mesh.geometry.index.needsUpdate = true;
     };
-    zero(ch.simple, b.rSimple);
+    zero(ch.simple, b.rSimple); zero(ch.shadow, b.rShadow);
     if (ch.detail) { zero(ch.detail.children[0], b.rDetail); zero(ch.detail.children[1], b.rGlass); }
     if (ch.job) { /* buildings not yet emitted are skipped; already emitted ones are zeroed when the job ends */
       const job = ch.job, k = ch.buildings.indexOf(b);
