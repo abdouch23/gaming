@@ -88,6 +88,7 @@ export class LevelLighting {
 
     // lights
     const s = this.sun = new THREE.DirectionalLight(0xfff0d8, 4.5); s.castShadow = true;
+    s.shadow.camera.layers.enable(1); // building shadow proxies (City SHADOW_LAYER)
     s.shadow.mapSize.set(o.shadowMap, o.shadowMap); s.shadow.bias = -0.0003; s.shadow.radius = 2;
     this.hemi = new THREE.HemisphereLight(0xd8dce6, 0x8a7a68, 0.25);
     this.amb = new THREE.AmbientLight(0xffe0c0, 0.2);
