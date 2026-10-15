@@ -1,0 +1,49 @@
+:root { --bg: rgba(12, 14, 18, 0.78); --fg: #e9edf2; --acc: #ffb15c; font-family: 'Segoe UI', Tahoma, system-ui, sans-serif; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d10; color: var(--fg); }
+#app, #app canvas { position: fixed; inset: 0; display: block; }
+#panel { position: fixed; top: 12px; right: 12px; width: 300px; max-height: calc(100% - 24px); overflow: auto; background: var(--bg); backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; font-size: 12.5px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35); }
+#panel header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); position: sticky; top: 0; background: rgba(12, 14, 18, 0.92); }
+#panel.collapsed #panelBody { display: none; }
+#panel section { padding: 8px 12px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
+#panel h3 { margin: 4px 0 8px; font-size: 13px; color: var(--acc); }
+#panel h3 small { color: #8a94a3; font-weight: 400; margin-inline-start: 4px; }
+#panel label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 5px 0; }
+#panel input[type=range] { width: 120px; accent-color: var(--acc); }
+#panel input[type=number], #panel select { width: 90px; background: #1b1f26; color: var(--fg); border: 1px solid #2c323c; border-radius: 6px; padding: 3px 6px; }
+#panel button { background: #262c36; color: var(--fg); border: 1px solid #3a4250; border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+#panel button:hover { background: #313948; }
+.row { display: flex; gap: 6px; margin-top: 6px; }
+.tools { display: flex; gap: 6px; flex-wrap: wrap; }
+.tools label { background: #1b1f26; padding: 4px 8px; border-radius: 6px; margin: 0 !important; cursor: pointer; }
+.note { color: #9aa4b2; display: block; margin: 2px 0 6px; }
+#stats { direction: ltr; text-align: left; font: 11px/1.45 ui-monospace, Consolas, monospace; color: #b8c2cf; margin: 6px 0 0; white-space: pre-wrap; }
+.help { color: #8a94a3; padding: 8px 12px; margin: 0; line-height: 1.6; }
+#loading { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(circle at 50% 40%, #1a2230, #07090c); z-index: 10; transition: opacity 0.6s; }
+#loading.hide { opacity: 0; pointer-events: none; }
+#loading .box { width: min(460px, 86vw); text-align: center; }
+#loading h1 { font-size: 26px; margin: 0 0 8px; letter-spacing: 0.5px; }
+#loading .bar { height: 6px; background: #1d232d; border-radius: 4px; overflow: hidden; margin: 14px 0 10px; }
+#loading .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #ff9b3d, #ffd28a); transition: width 0.2s; }
+#loading small { color: #8a94a3; }
+#toolHint { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); background: var(--bg); padding: 6px 14px; border-radius: 20px; font-size: 12.5px; pointer-events: none; opacity: 0; transition: opacity 0.3s; }
+#toolHint.on { opacity: 1; }
+body.aim canvas { cursor: crosshair; }
+.inspector { background: #171b22; border: 1px solid #2c323c; border-radius: 8px; padding: 6px 8px; margin: 8px 0; }
+.hidden { display: none; }
+.styles { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+.styles label { background: #1b1f26; padding: 3px 7px; border-radius: 6px; margin: 0 !important; font-size: 11.5px; }
+#params label span, #panel label span { min-width: 34px; text-align: left; direction: ltr; color: #9aa4b2; font: 11px ui-monospace, monospace; }
+#minimap { width: 100%; aspect-ratio: 1; margin-top: 8px; border-radius: 8px; background: #20252c; cursor: pointer; }
+#panel button.accent { background: #7a4a16; border-color: #b9792e; }
+#crosshair { position: fixed; left: 50%; top: 50%; width: 22px; height: 22px; transform: translate(-50%, -50%); pointer-events: none; z-index: 5; }
+#crosshair::before, #crosshair::after { content: ''; position: absolute; background: rgba(255, 255, 255, 0.9); box-shadow: 0 0 2px #000; }
+#crosshair::before { left: 10px; top: 2px; width: 2px; height: 18px; }
+#crosshair::after { top: 10px; left: 2px; height: 2px; width: 18px; }
+#fpsHud { position: fixed; left: 14px; bottom: 14px; background: var(--bg); padding: 6px 12px; border-radius: 8px; font: 12px ui-monospace, Consolas, monospace; direction: ltr; pointer-events: none; }
+#fpsOverlay { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); z-index: 8; cursor: pointer; }
+#fpsOverlay .box { background: var(--bg); padding: 18px 26px; border-radius: 12px; text-align: center; line-height: 1.8; }
+#fpsOverlay b { font-size: 18px; color: var(--acc); }
+body.walking #panel { display: none; }
+body.walking.paused #panel { display: block; }
+.hidden { display: none !important; }
