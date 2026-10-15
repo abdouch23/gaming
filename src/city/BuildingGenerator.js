@@ -140,6 +140,19 @@ export function buildingVolumes(b) {
   return vols;
 }
 
+/* ---------- shadow proxy: solid, slightly inset volume ---------- */
+// LOD0 buildings are hollow shells with real window openings, so they leak sunlight. The proxy closes
+// them. It is inset behind the window recesses so sunlit glass and reveals never fall inside it.
+export const SHADOW_INSET = 0.4;
+export function buildShadowProxy(b, G) {
+  G.setTransform(b.matrix);
+  const k = SHADOW_INSET, last = b.tiers.length - 1;
+  const tiers = b.tiers.map((t, i) => ({ ...t, w: Math.max(1, t.w - 2 * k), d: Math.max(1, t.d - 2 * k), y1: i === last && b.roofType !== 'flat' ? t.y1 : t.y1 - k }));
+  for (const t of tiers) G.box(t.ox, (t.y0 + t.y1) / 2, t.oz, t.w, t.y1 - t.y0, t.d, ['ny']);
+  const R = roofPolys({ tiers, roofType: b.roofType, roofH: b.roofH });
+  if (R) { for (const s of R.slopes) G.poly(s, () => [0, 0]); if (R.top) G.poly(R.top, () => [0, 0]); }
+}
+
 /* ---------- LOD1: boxes + shader windows ---------- */
 export function buildSimple(b, G) {
   G.setTransform(b.matrix);
