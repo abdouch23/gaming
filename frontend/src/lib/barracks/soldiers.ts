@@ -32,6 +32,14 @@ interface Def {
 }
 
 const FACE = (dx: number, dz: number) => Math.atan2(dx, dz); // forward = (sin yaw, cos yaw)
+
+// A* is the only expensive AI call: cap it per frame so a siren (20 soldiers repathing) never spikes a frame
+let pathBudget = 0;
+function budgetedPath(fx: number, fz: number, tx: number, tz: number): V2[] | null | undefined {
+  if (pathBudget <= 0) return undefined;
+  pathBudget--;
+  return findPath(fx, fz, tx, tz);
+}
 const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
 const DEFS: Def[] = [
@@ -54,7 +62,10 @@ const DEFS: Def[] = [
     route: [[-31.2, -30], [-31.2, -60], [-31.2, -84.5], [-8, -85], [14, -85.2], [30, -85]], pauses: { 2: 5, 5: 7 }, pingPong: true },
   { id: "armory", role: "post", zone: "compound", x: 24, z: -74.6, yaw: 0, sweep: 0.9 },
   { id: "motor", role: "post", zone: "compound", x: 31.6, z: -56, yaw: FACE(-1, 0), sweep: 1.2 },
-  { id: "hqdoor", role: "post", zone: "compound", x: -2, z: -74.4, yaw: 0, sweep: 0.8 },
+  { id: "hqdoor", role: "post", zone: "compound", x: -1.9, z: -74.3, yaw: 0, sweep: 0.8 },
+  // the duty clerk walks the HQ corridor at night
+  { id: "planton", role: "patrol", zone: "compound", x: 0, z: -77.6, yaw: 0, speed: 0.9,
+    route: [[0, -77.6], [-6.5, -79], [-0.5, -80.8], [6.5, -77.2], [0.5, -77.6]], pauses: { 1: 7, 3: 6 } },
   { id: "tower1", role: "tower", zone: "compound", x: TOWERS[1][0], z: TOWERS[1][1], yaw: FACE(-1, -0.4), tower: 1 },
   { id: "tower2", role: "tower", zone: "compound", x: TOWERS[2][0], z: TOWERS[2][1], yaw: FACE(-1, 0.3), tower: 2 },
   // ---- sleepers (wake on the siren) and the reinforcement truck ----
@@ -97,6 +108,8 @@ export class Soldier {
   bodySeen = false;
   sinceSeen = 99;
   token = false;
+  mateScan = 0;
+  mateTarget: THREE.Vector3 | null = null;
 
   constructor(def: Def, scene: THREE.Scene) {
     this.def = def;
@@ -180,7 +193,7 @@ export class Soldier {
   }
 }
 
-export interface ShotEvent { from: THREE.Vector3; to: THREE.Vector3; hit: boolean; dmg: number; shooter: Soldier | null }
+export interface ShotEvent { from: THREE.Vector3; to: THREE.Vector3; hit: boolean; dmg: number; shooter: Soldier | null; atMate?: boolean }
 export interface GarrisonEvents {
   onCaught?: (by: Soldier) => void;
   onAlarm?: (level: number, reason: string) => void;
@@ -202,6 +215,8 @@ export class Garrison {
   phoneCut = false;
   zoneActive: Record<Zone, boolean> = { village: true, compound: true };
   coverAt: { x: number; z: number; r: number }[] = []; // ally covering fire suppresses accuracy here
+  /** squad positions (chest height); hunters who lose the player fire at them instead (they always duck in time) */
+  mates: THREE.Vector3[] = [];
   private ev: GarrisonEvents;
   private byId = new Map<string, Soldier>();
   private sweepT = 0;
@@ -399,6 +414,7 @@ export class Garrison {
 
   update(dt: number, st: Stimulus, bodiesVisible = true) {
     this.sweepT += dt;
+    pathBudget = 4;
     // attack tokens: only the nearest few soldiers who can see the player may shoot at once
     const shooters = this.soldiers.filter((s) => s.alive && s.seesPlayer && (s.state === "alert" || s.state === "hunt" || s.role === "tower"));
     shooters.sort((a, b) => a.pos.distanceToSquared(st.feet) - b.pos.distanceToSquared(st.feet));
@@ -570,7 +586,13 @@ export class Garrison {
     if (!s.goal || Math.hypot(s.goal[0] - gx, s.goal[1] - gz) > 3 || s.repath <= 0 || !s.path.length) {
       if (s.repath <= 0 || !s.goal || Math.hypot(s.goal[0] - gx, s.goal[1] - gz) > 3) {
         s.goal = [gx, gz];
-        s.path = findPath(s.pos.x, s.pos.z, gx, gz) ?? [[gx, gz]];
+        const p = budgetedPath(s.pos.x, s.pos.z, gx, gz);
+        if (p === undefined) {
+          s.repath = 0.05;
+          s.goal = null;
+          return this.moveAlong(s, dt, speed);
+        }
+        s.path = p ?? [[gx, gz]];
         s.repath = 1.6 + Math.random() * 0.8;
       }
     }
@@ -595,6 +617,8 @@ export class Garrison {
         // keep a fighting distance
         const d = s.pos.distanceTo(st.feet);
         if (d > 22) this.goTo(s, st.feet.x, st.feet.z, dt, 3.2);
+      } else if (this.fireAtMates(s, dt)) {
+        // pinned by the squad: holds position and trades fire
       } else if (this.lastKnownAge < 40) {
         s.aim = 0;
         const off = (s.phase % 1) * 6 - 3;
@@ -620,13 +644,13 @@ export class Garrison {
         s.repath = 1.5;
         const a = Math.random() * Math.PI * 2, r = 4 + Math.random() * 8;
         const cx = this.lastKnownAge < 60 ? this.lastKnown.x : s.def.x, cz = this.lastKnownAge < 60 ? this.lastKnown.z : s.def.z;
-        s.path = findPath(s.pos.x, s.pos.z, cx + Math.cos(a) * r, cz + Math.sin(a) * r) ?? [];
+        s.path = budgetedPath(s.pos.x, s.pos.z, cx + Math.cos(a) * r, cz + Math.sin(a) * r) ?? [];
       }
       this.moveAlong(s, dt, 1.8);
       if (s.timer <= 0) {
         s.state = this.alarm >= 2 ? "hunt" : "calm";
         s.suspicion = this.alarm >= 1 ? 0.2 : 0;
-        if (s.state === "calm") s.path = findPath(s.pos.x, s.pos.z, s.def.x, s.def.z) ?? [];
+        if (s.state === "calm") s.path = budgetedPath(s.pos.x, s.pos.z, s.def.x, s.def.z) ?? [];
       }
       return;
     }
@@ -643,7 +667,7 @@ export class Garrison {
           } else {
             s.state = "calm";
             s.suspicion = Math.min(s.suspicion, 0.3);
-            s.path = findPath(s.pos.x, s.pos.z, s.def.x, s.def.z) ?? [];
+            s.path = budgetedPath(s.pos.x, s.pos.z, s.def.x, s.def.z) ?? [];
           }
         }
       }
@@ -711,7 +735,9 @@ export class Garrison {
       s.repath -= dt;
       if (!s.path.length && s.repath <= 0) {
         s.repath = 1.5;
-        s.path = findPath(s.pos.x, s.pos.z, s.def.x, s.def.z) ?? [[s.def.x, s.def.z]];
+        const p = budgetedPath(s.pos.x, s.pos.z, s.def.x, s.def.z);
+        if (p !== undefined) s.path = p ?? [[s.def.x, s.def.z]];
+        else s.repath = 0.05;
       }
       this.moveAlong(s, dt, 1.2);
       return;
@@ -725,6 +751,27 @@ export class Garrison {
       s.dozing = !(cyc > 18 && cyc < 22);
       if (!s.dozing && cyc > 21.9) s.dozing = true;
     }
+  }
+
+  private fireAtMates(s: Soldier, dt: number) {
+    if (!this.mates.length) return false;
+    s.mateScan -= dt;
+    if (s.mateScan <= 0) {
+      s.mateScan = 0.5;
+      const eye = s.eye();
+      s.mateTarget = this.mates.find((m) => m.distanceTo(eye) < 30 && lineClear(eye.x, eye.y, eye.z, m.x, m.y, m.z)) ?? null;
+    }
+    const m = s.mateTarget;
+    if (!m) return false;
+    this.turn(s, FACE(m.x - s.pos.x, m.z - s.pos.z), dt, 5);
+    s.fireCd -= dt;
+    if (s.fireCd <= 0) {
+      s.fireCd = 1.6 + Math.random() * 1.4;
+      const from = s.eye().add(new THREE.Vector3(Math.sin(s.yaw) * 0.5, -0.12, Math.cos(s.yaw) * 0.5));
+      const to = m.clone().add(new THREE.Vector3((Math.random() - 0.5) * 1.6, 0.3 + Math.random() * 0.8, (Math.random() - 0.5) * 1.6));
+      this.ev.onShot?.({ from, to, hit: false, dmg: 0, shooter: s, atMate: true });
+    }
+    return true;
   }
 
   private shoot(s: Soldier, st: Stimulus, dt: number, accMul: number) {

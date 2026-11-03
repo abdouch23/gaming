@@ -154,3 +154,18 @@ html, body, #root { height: 100%; background: #000; overflow: hidden; }
   100% { box-shadow: 0 0 0 14px rgba(160, 220, 255, 0); }
 }
 .night-ping { animation: night-ping 2.2s ease-out infinite; }
+
+/* Chapter II cinematic UI */
+@keyframes cine-bar { 0% { transform: scaleY(0); } 100% { transform: scaleY(1); } }
+.cine-bar { animation: cine-bar 0.9s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.cine-bar.bottom-0 { transform-origin: bottom; }
+.cine-bar.top-0 { transform-origin: top; }
+@keyframes portrait-in {
+  0% { opacity: 0; transform: translateX(-18px) scale(0.97); filter: blur(3px) sepia(0.6); }
+  100% { opacity: 1; transform: none; filter: none; }
+}
+.portrait-in { animation: portrait-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes bark-in { 0% { opacity: 0; transform: translateX(-14px); } 10%, 88% { opacity: 1; transform: none; } 100% { opacity: 0; } }
+.bark-in { animation: bark-in 6.5s ease-out both; }
+@keyframes caption-in { 0% { opacity: 0; letter-spacing: 0.02em; filter: blur(6px); } 20%, 85% { opacity: 1; filter: none; } 100% { opacity: 0; } }
+.caption-in { animation: caption-in 6s ease-in-out both; }

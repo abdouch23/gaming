@@ -42,6 +42,16 @@ export class BarracksAudio extends NightAudio {
     this.burst(t, { dur: heavy ? 0.5 : 0.35, freq: 140, q: 0.6, type: "lowpass", gain: 1.1 * near, pan, wet: 0.9 });
   }
 
+  /** vehicle charges going off: a crack, a deep body and a long rolling tail */
+  explosion() {
+    if (!this.ok()) return;
+    const t = this.ctx!.currentTime;
+    this.burst(t, { dur: 0.25, freq: 900, q: 0.4, gain: 1.2, wet: 1.2 });
+    this.burst(t, { dur: 2.8, freq: 70, type: "lowpass", gain: 1.6, wet: 1.4 });
+    this.burst(t + 0.35, { dur: 3.5, freq: 140, type: "lowpass", gain: 0.8, wet: 1.6 });
+    this.burst(t + 0.9, { dur: 0.6, freq: 1400, q: 0.6, gain: 0.25, wet: 1 });
+  }
+
   click() {
     if (!this.ok()) return;
     this.burst(this.ctx!.currentTime, { dur: 0.03, freq: 3200, q: 4, gain: 0.25 });

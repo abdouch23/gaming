@@ -35,8 +35,8 @@ export const SPAWN = { x: 24, z: 76, yaw: Math.PI / 2 };
 export const SAFEHOUSE = { x: 24, z: 70 };
 export const CEMETERY = { x: -40, z: 50 };
 export const MESSAOUD = { x: -39.8, z: 51.4 };
-export const KEF = { x: -46, z: -12, r: 11, h: 7.5 }; // observation ridge
-export const KEF_TOP = { x: -44, z: -17 };
+export const KEF = { x: -76, z: 6, r: 16, h: 20 }; // observation ridge, out of the towers' reach
+export const KEF_TOP = { x: -72, z: 1 };
 export const MILL = { x: -74, z: -30 };
 export const RABAH_DOOR = { x: -68.2, z: -26.6 };
 export const LAKHDAR = { x: -67.4, z: -31.6 };
@@ -50,6 +50,17 @@ export const GENERATOR = { x: -29.5, z: -80 };
 export const ARMORY = { x: 24, z: -80, w: 8, d: 6 };
 export const ARMORY_DOOR = { x: 24, z: -76.4 };
 export const GUARDROOM = { x: 14, z: -30, w: 9, d: 6 };
+// HQ (P.C.) — enterable: hall + commander's office (W), radio room (SE), records (NE)
+export const HQ = { x: 0, z: CZ - 24, w: 22, d: 8, h: 4.2 };
+export const HQ_DOOR = { x: 0, z: HQ.z + HQ.d / 2 };
+export const HQ_WINDOW = { x: 6, z: HQ.z - HQ.d / 2 }; // breach low in the back wall (1.25 m), crouch to pass
+export const HQ_ITEMS = {
+  maps: { x: -7.5, z: -80.6, ar: "خرائط المواقع", en: "Outpost maps" },
+  safe: { x: -10.1, z: -77.2, ar: "خزنة القائد", en: "Commander's safe" },
+  records: { x: 9.6, z: -80.4, ar: "سجلّ المخبرين", en: "Informers' register" },
+  radio: { x: 9.4, z: -77.0, ar: "جهاز اللاسلكي", en: "Radio set" },
+};
+export const RESTRICT_PAD = 7; // no approaching the compound before the plan
 export const OFFICER = { x: 14, z: -34.3 };
 export const RACKS: V2[] = [[21.2, -81.9], [24, -81.9], [26.8, -81.9]];
 export const DIVERSION_FIRE = { x: -3, z: -12 };
@@ -120,7 +131,7 @@ export function splatAt(x: number, z: number, ny: number): [number, number, numb
 }
 
 // ---------------- buildings & collision ----------------
-export type BoxKind = "solid" | "fence" | "crawl" | "low" | "cover"; // cover: blocks sight only (bushes)
+export type BoxKind = "solid" | "fence" | "crawl" | "low" | "cover" | "roof"; // cover: blocks sight only (bushes); roof: ceilings (sight + moon shadow only)
 export interface Box {
   x0: number; x1: number; z0: number; z1: number;
   y0: number; top: number;
@@ -137,8 +148,9 @@ const box = (cx: number, cz: number, w: number, d: number, h: number, kind: BoxK
 };
 
 export interface Building { id: string; x: number; z: number; w: number; d: number; h: number; door: "n" | "s" | "e" | "w"; ar: string; en: string; kind: "barracks" | "hq" | "mess" | "guard" | "armory" | "shed" }
+export const insideHQ = (x: number, z: number) => Math.abs(x - HQ.x) < HQ.w / 2 && Math.abs(z - HQ.z) < HQ.d / 2;
 export const BUILDINGS: Building[] = [
-  { id: "hq", x: 0, z: CZ - 24, w: 22, d: 8, h: 4.6, door: "s", ar: "القيادة", en: "HQ", kind: "hq" },
+  { id: "hq", x: 0, z: CZ - 24, w: 22, d: 8, h: 4.2, door: "s", ar: "القيادة", en: "HQ", kind: "hq" },
   { id: "mess", x: -14, z: CZ + 25, w: 9, d: 6.5, h: 3.8, door: "n", ar: "المطعم", en: "Mess hall", kind: "mess" },
   { id: "guard", x: GUARDROOM.x, z: GUARDROOM.z, w: GUARDROOM.w, d: GUARDROOM.d, h: 3.6, door: "n", ar: "غرفة الحرس", en: "Guardroom", kind: "guard" },
   ...[-11.5, 0, 11.5].map((dz, i) => ({ id: `b${i + 1}`, x: -24, z: CZ + dz, w: 12, d: 7, h: 3.9, door: "e" as const, ar: `المهجع ${i + 1}`, en: `Barracks ${i + 1}`, kind: "barracks" as const })),
@@ -148,7 +160,12 @@ export const BUILDINGS: Building[] = [
 ];
 export const TOWERS: V2[] = [[COMPOUND.minX + 1, COMPOUND.minZ + 1], [COMPOUND.maxX - 1, COMPOUND.minZ + 1], [COMPOUND.minX + 1, COMPOUND.maxZ - 1], [COMPOUND.maxX - 1, COMPOUND.maxZ - 1]];
 export const TOWER_H = 6.2;
-export const TRUCKS: { x: number; z: number; rot: number }[] = [{ x: 31, z: CZ - 9, rot: 0 }, { x: 31, z: CZ + 8, rot: 0 }, { x: -6, z: -17, rot: Math.PI / 2 }];
+export const TRUCKS: { x: number; z: number; rot: number; ar: string; en: string }[] = [
+  { x: 32, z: CZ - 9, rot: 0, ar: "شاحنة GMC", en: "GMC truck" },
+  { x: 32, z: CZ + 8, rot: 0, ar: "شاحنة GMC", en: "GMC truck" },
+  { x: 24, z: -35, rot: 0, ar: "شاحنة الدورية", en: "Patrol truck" },
+];
+export const CHARGE_TIMER = 60;
 export const CRATES: V2[] = [[-31, CZ + 10], [30.5, CZ - 24], [-6, CZ - 29.5], [9, -41], [-9, -66]];
 export const DRUMS: V2[] = [[-31, CZ + 18], [31, CZ - 18], [14, CZ - 29.5], [-27.5, -77]];
 export const FLAG = { x: 0, z: CZ + 5 };
@@ -172,7 +189,7 @@ export const MOON_DIR_ARR = [0.32, 0.45, 0.83] as const; // moon in the south-ea
 
 // ---- populate collision ----
 for (const b of BUILDINGS) {
-  if (b.kind === "armory") continue;
+  if (b.kind === "armory" || b.kind === "hq") continue;
   box(b.x, b.z, b.w, b.d, b.h + 1.6, "solid", b.id, COMPOUND_Y);
 }
 // armory: enterable shell with a south doorway (door id toggles)
@@ -185,6 +202,36 @@ for (const b of BUILDINGS) {
   box(x + 2.45, z + d / 2 - t / 2, w / 2 - 0.9, t, H, "solid", "armory", COMPOUND_Y);
   box(ARMORY_DOOR.x, ARMORY_DOOR.z, 1.8, 0.3, 2.4, "solid", "armory-door", COMPOUND_Y);
   for (const [rx, rz] of RACKS) box(rx, rz, 1.8, 0.7, 1.9, "solid", "rack", COMPOUND_Y);
+  BOXES.push({ x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2, y0: COMPOUND_Y + H, top: COMPOUND_Y + H + 0.3, kind: "roof", id: "armory-roof" });
+}
+// HQ shell: outer walls with front door, broken rear window, partitions with doorways, roof
+{
+  const { x, z, w, d, h } = HQ, t = 0.3, Y = COMPOUND_Y;
+  const zs = z + d / 2 - t / 2, zn = z - d / 2 + t / 2;
+  const wall = (cx: number, cz: number, ww: number, dd: number) => box(cx, cz, ww, dd, h, "solid", "hq", Y);
+  const spanX = (x0: number, x1: number, cz: number) => wall((x0 + x1) / 2, cz, x1 - x0, t);
+  const spanZ = (z0: number, z1: number, cx: number) => wall(cx, (z0 + z1) / 2, t, z1 - z0);
+  spanX(x - w / 2, HQ_DOOR.x - 0.8, zs);
+  spanX(HQ_DOOR.x + 0.8, x + w / 2, zs);
+  spanX(x - w / 2, HQ_WINDOW.x - 0.8, zn);
+  spanX(HQ_WINDOW.x + 0.8, x + w / 2, zn);
+  BOXES.push({ x0: HQ_WINDOW.x - 0.8, x1: HQ_WINDOW.x + 0.8, z0: zn - t / 2 - 0.2, z1: zn + t / 2 + 0.2, y0: Y + 1.25, top: Y + h, kind: "crawl", id: "hq-window" });
+  spanZ(z - d / 2, z + d / 2, x - w / 2 + t / 2);
+  spanZ(z - d / 2, z + d / 2, x + w / 2 - t / 2);
+  for (const px of [-3, 3]) {
+    spanZ(z - d / 2, z - 0.8, px);
+    spanZ(z + 0.8, z + d / 2, px);
+  }
+  spanX(3, 6.2, z);
+  spanX(7.8, x + w / 2, z);
+  BOXES.push({ x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2, y0: Y + h, top: Y + h + 0.5, kind: "roof", id: "hq-roof" });
+  // furniture
+  box(-7.5, -81.7, 2, 0.9, 0.8, "low", "desk", Y);
+  box(-10.3, -77.2, 0.8, 0.8, 1.2, "low", "safe", Y);
+  box(1.8, -82.1, 1.6, 0.8, 0.8, "low", "desk", Y);
+  box(10.2, -81.2, 0.7, 2.4, 2, "solid", "cabinet", Y);
+  box(3.6, -81.5, 0.6, 2, 2, "solid", "cabinet", Y);
+  box(10.2, -77, 0.9, 1.8, 0.85, "low", "radio", Y);
 }
 for (const [tx, tz] of TOWERS) {
   for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) box(tx + sx * 1.1, tz + sz * 1.1, 0.3, 0.3, TOWER_H, "solid", "tower", COMPOUND_Y);
@@ -240,12 +287,12 @@ for (const h of VILLAGE) box(h.x, h.z, h.w, h.d, h.h + 1.2, "solid", "house");
   box(CEMETERY.x - 1.5, CEMETERY.z - 2, 4, 4, 3.4, "solid", "marabout");
 }
 
-export const NAV_BLOCKERS = () => BOXES.filter((b) => !b.off && b.kind !== "crawl" && b.kind !== "cover");
+export const NAV_BLOCKERS = () => BOXES.filter((b) => !b.off && b.kind !== "crawl" && b.kind !== "cover" && b.kind !== "roof");
 
 /** blocked-for-walking test used by player and soldiers */
 export function solidAt(x: number, z: number, footY: number, crouched: boolean, r = 0.3) {
   for (const b of BOXES) {
-    if (b.off || b.kind === "cover") continue;
+    if (b.off || b.kind === "cover" || b.kind === "roof") continue;
     if (x + r < b.x0 || x - r > b.x1 || z + r < b.z0 || z - r > b.z1) continue;
     if (b.kind === "crawl") {
       if (!crouched) return true;
@@ -262,7 +309,7 @@ export function groundAt(x: number, z: number, footY = Infinity): Ground {
   let y = terrainHeight(x, z);
   let surface: Surface = roadDist(x, z) < 1.8 || insideCompound(x, z, 2) ? "gravel" : ouedDepth(x, z) > 1.2 ? "stone" : "dirt";
   for (const b of BOXES) {
-    if (b.off || b.kind === "crawl" || b.kind === "fence" || b.kind === "cover") continue;
+    if (b.off || b.kind === "crawl" || b.kind === "fence" || b.kind === "cover" || b.kind === "roof") continue;
     if (x < b.x0 || x > b.x1 || z < b.z0 || z > b.z1) continue;
     if (b.top > y && b.top <= footY + 0.6) {
       y = b.top;
@@ -318,14 +365,15 @@ export function zoneAt(x: number, z: number) {
 }
 
 // ---------------- navigation grid (A*) ----------------
-const CELL = 1;
+const CELL = 0.5;
 const NW = Math.ceil((MAP.maxX - MAP.minX) / CELL), NH = Math.ceil((MAP.maxZ - MAP.minZ) / CELL);
 let navGrid: Uint8Array | null = null;
 export function rebuildNav() {
   const g = new Uint8Array(NW * NH);
   for (const b of NAV_BLOCKERS()) {
-    const i0 = Math.max(0, Math.floor((b.x0 - 0.45 - MAP.minX) / CELL)), i1 = Math.min(NW - 1, Math.floor((b.x1 + 0.45 - MAP.minX) / CELL));
-    const j0 = Math.max(0, Math.floor((b.z0 - 0.45 - MAP.minZ) / CELL)), j1 = Math.min(NH - 1, Math.floor((b.z1 + 0.45 - MAP.minZ) / CELL));
+    const P = 0.3; // body radius
+    const i0 = Math.max(0, Math.floor((b.x0 - P - MAP.minX) / CELL)), i1 = Math.min(NW - 1, Math.floor((b.x1 + P - MAP.minX) / CELL));
+    const j0 = Math.max(0, Math.floor((b.z0 - P - MAP.minZ) / CELL)), j1 = Math.min(NH - 1, Math.floor((b.z1 + P - MAP.minZ) / CELL));
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) g[j * NW + i] = 1;
   }
   navGrid = g;
@@ -336,7 +384,7 @@ const centre = (i: number, j: number): V2 => [MAP.minX + (i + 0.5) * CELL, MAP.m
 function nearestFree(i: number, j: number) {
   const g = navGrid!;
   if (!g[j * NW + i]) return [i, j];
-  for (let r = 1; r < 6; r++)
+  for (let r = 1; r < 10; r++)
     for (let dj = -r; dj <= r; dj++)
       for (let di = -r; di <= r; di++) {
         const a = i + di, b = j + dj;
@@ -346,7 +394,7 @@ function nearestFree(i: number, j: number) {
 }
 
 /** grid A* with octile moves, then string-pulled with straight-line checks */
-export function findPath(fx: number, fz: number, tx: number, tz: number, maxNodes = 9000): V2[] | null {
+export function findPath(fx: number, fz: number, tx: number, tz: number, maxNodes = 30000): V2[] | null {
   if (!navGrid) rebuildNav();
   const g = navGrid!;
   const [si, sj] = nearestFree(...(cellOf(fx, fz) as [number, number]));
