@@ -12,12 +12,13 @@ import type { BarracksAudio } from "@/lib/barracks/audio";
 import {
   MAP, BOXES, BUILDINGS, TOWERS, TOWER_H, TRUCKS, CRATES, DRUMS, FLAG, VILLAGE, COMPOUND, COMPOUND_Y, GATE, WIRE, DRAIN, GENERATOR,
   ARMORY, ARMORY_DOOR, RACKS, SPAWN, CEMETERY, MESSAOUD, KEF, KEF_TOP, MILL, RABAH_DOOR, LAKHDAR, TABLE, RALLY, CHECKPOINT,
-  DIVERSION_FIRE, PHONE_POLE, OUED, MOON_DIR_ARR, HQ, HQ_DOOR, HQ_WINDOW, HQ_ITEMS, RESTRICT_PAD, CHARGE_TIMER, insideHQ,
+  DIVERSION_FIRE, PHONE_POLE, OUED, MOON_DIR_ARR, DV, TOWN, SAFEHOUSE, smoothstep, TOWN_BLOCKS, TOWN_HOUSES, ROAD_SETS, boxesIn, HQ, HQ_DOOR, HQ_WINDOW, HQ_ITEMS, RESTRICT_PAD, CHARGE_TIMER, insideHQ,
   terrainHeight, splatAt, groundAt, solidAt, lineClear, zoneAt, roadDist, ouedDepth, insideCompound, rebuildNav,
   type Zone, type Building,
 } from "@/lib/barracks/map";
 import { Garrison, type Soldier, type Stimulus, type ShotEvent } from "@/lib/barracks/soldiers";
 import { Squad, makeMujahid, type MateId } from "@/lib/barracks/squad";
+import { forestAt, ROADS } from "@/lib/barracks/terrain";
 
 export type Stage = "prologue" | "escape" | "meet" | "recon" | "plan" | "infiltrate" | "hq" | "armory" | "sabotage" | "exfil" | "ended";
 const STAGE_ORDER: Stage[] = ["prologue", "escape", "meet", "recon", "plan", "infiltrate", "hq", "armory", "sabotage", "exfil", "ended"];
@@ -112,19 +113,16 @@ const OBJ: Record<Stage, [string, string]> = {
 const START_MIN = 22 * 60 + 40;
 const SEC_PER_MIN = 10;
 // prologue: the meeting in the Ben Chaïba courtyard (Dachra Ouled Moussa)
-const MEETING_CENTER = { x: 24, z: 77 };
-const MEETING: Partial<Record<CastId, { x: number; z: number }>> = {
-  benboulaid: { x: 24, z: 79.3 },
-  chihani: { x: 21.8, z: 78.4 },
-  laghrour: { x: 26.2, z: 78.3 },
-  adjoul: { x: 21.7, z: 75.8 },
-  boucetta: { x: 26.3, z: 75.7 },
-};
-const PLAYER_MEET = { x: 24, z: 74.7 };
+const MEETING_CENTER = { x: 24 + DV.x, z: 77 + DV.z };
+const MEETING: Partial<Record<CastId, { x: number; z: number }>> = Object.fromEntries(
+  Object.entries({ benboulaid: [24, 79.3], chihani: [21.8, 78.4], laghrour: [26.2, 78.3], adjoul: [21.7, 75.8], boucetta: [26.3, 75.7] }).map(([k, [x, z]]) => [k, { x: x + DV.x, z: z + DV.z }]),
+);
+const PLAYER_MEET = { x: 24 + DV.x, z: 74.7 + DV.z };
 const MATE_NAMES: Record<MateId, string> = { laghrour: "عباس لغرور", adjoul: "عاجل عجول", azawi: "مرود العزوي" };
 const MOON_DIR = new THREE.Vector3(...MOON_DIR_ARR).normalize();
 const HORIZON = new THREE.Color().setRGB(0.035, 0.07, 0.1);
 const EYE_STAND = 1.65, EYE_CROUCH = 0.95, RADIUS = 0.3;
+const FOG = 0.0095, FOG_BINOC = 0.0042;
 const WEAPONS = {
   pistol: { ar: "مسدس", en: "Pistol", mag: 8, dmg: 55, head: 200, rate: 0.28, spread: 0.012, reload: 1.5 },
   rifle: { ar: "بندقية MAS-36", en: "MAS-36 rifle", mag: 5, dmg: 120, head: 250, rate: 0.95, spread: 0.004, reload: 2.4 },
@@ -152,7 +150,7 @@ void main(){
 }
 `;
 
-interface Lamp { pos: THREE.Vector3; radius: number; power: number; grid: boolean; glow: THREE.Sprite; haze: THREE.Sprite; head: THREE.MeshStandardMaterial | null; flicker: Flicker; warm: boolean; on: boolean }
+interface Lamp { town?: boolean; pos: THREE.Vector3; radius: number; power: number; grid: boolean; glow: THREE.Sprite; haze: THREE.Sprite; head: THREE.MeshStandardMaterial | null; flicker: Flicker; warm: boolean; on: boolean }
 interface BeamFx { light: THREE.SpotLight; cone: THREE.Mesh; mat: THREE.ShaderMaterial; head: THREE.Object3D }
 interface Tracer { line: THREE.Line; life: number; mat: THREE.LineBasicMaterial }
 interface Ally { id: string; group: THREE.Group; pos: THREE.Vector3; fireCd: number; active: boolean; covering: boolean }
@@ -386,9 +384,9 @@ export class BarracksLevel {
     this.renderer.toneMappingExposure = 1.2;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.scene.fog = new THREE.FogExp2(HORIZON.clone(), 0.017);
+    this.scene.fog = new THREE.FogExp2(HORIZON.clone(), FOG);
     this.fovBase = w < h ? 80 : 68;
-    this.camera = new THREE.PerspectiveCamera(this.fovBase, w / h, 0.05, 800);
+    this.camera = new THREE.PerspectiveCamera(this.fovBase, w / h, 0.05, 1400);
     this.scene.add(this.camera);
 
     this.green = createGreenKit({
@@ -413,6 +411,7 @@ export class BarracksLevel {
     this.buildTerrain();
     this.buildVillage();
     this.buildCompound();
+    this.buildTown();
     this.buildFence();
     this.buildTowers();
     this.buildProps();
@@ -533,23 +532,104 @@ export class BarracksLevel {
     this.scene.add(this.skyGroup);
   }
 
+  // ---------------- streamed terrain (64 m chunks, 4 LODs with skirts) ----------------
+  private chunks = new Map<number, { lv: number; mesh: THREE.Mesh }>();
+  private chunkTimer = 0;
+  private static readonly CH = 64;
+  private static readonly TX0 = MAP.minX - 20;
+  private static readonly TZ0 = MAP.minZ - 20;
+  private static readonly NCX = Math.ceil((MAP.maxX - MAP.minX + 40) / 64);
+  private static readonly NCZ = Math.ceil((MAP.maxZ - MAP.minZ + 40) / 64);
+
+  private buildChunkGeo(ci: number, cj: number, lv: number) {
+    const CH = BarracksLevel.CH, step = [1, 2, 4, 8][lv], n = CH / step;
+    const x0 = BarracksLevel.TX0 + ci * CH, z0 = BarracksLevel.TZ0 + cj * CH;
+    const N = (n + 1) * (n + 1), S = 4 * (n + 1);
+    const pos = new Float32Array((N + S) * 3), nor = new Float32Array((N + S) * 3), uv = new Float32Array((N + S) * 2), spl = new Float32Array((N + S) * 4);
+    const e = Math.max(1, step * 0.5);
+    const put = (k: number, x: number, z: number, drop: number) => {
+      const y = terrainHeight(x, z);
+      const a = terrainHeight(x - e, z) - terrainHeight(x + e, z), b = terrainHeight(x, z - e) - terrainHeight(x, z + e), l = Math.hypot(a, 2 * e, b);
+      pos[k * 3] = x;
+      pos[k * 3 + 1] = y - drop;
+      pos[k * 3 + 2] = z;
+      nor[k * 3] = a / l;
+      nor[k * 3 + 1] = (2 * e) / l;
+      nor[k * 3 + 2] = b / l;
+      uv[k * 2] = x / 16;
+      uv[k * 2 + 1] = z / 16;
+      spl.set(splatAt(x, z, (2 * e) / l), k * 4);
+    };
+    for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) put(j * (n + 1) + i, x0 + i * step, z0 + j * step, 0);
+    const idx: number[] = [];
+    for (let j = 0; j < n; j++)
+      for (let i = 0; i < n; i++) {
+        const a = j * (n + 1) + i, b = a + 1, c = a + n + 1, d = c + 1;
+        idx.push(a, c, b, b, c, d);
+      }
+    // skirts hide cracks between neighbouring LODs
+    const drop = step * 0.8 + 0.6;
+    const edges: number[][] = [[], [], [], []];
+    for (let t = 0; t <= n; t++) {
+      edges[0].push(t);
+      edges[1].push(n * (n + 1) + t);
+      edges[2].push(t * (n + 1));
+      edges[3].push(t * (n + 1) + n);
+    }
+    let k = N;
+    for (const ed of edges) {
+      const base = k;
+      for (const v of ed) put(k++, pos[v * 3], pos[v * 3 + 2], drop);
+      for (let t = 0; t < n; t++) {
+        const a = ed[t], b = ed[t + 1], c = base + t, d = base + t + 1;
+        idx.push(a, c, b, b, c, d, a, b, c, b, d, c);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    g.setAttribute("normal", new THREE.BufferAttribute(nor, 3));
+    g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+    g.setAttribute("aSplat", new THREE.BufferAttribute(spl, 4));
+    g.setIndex(idx);
+    g.computeBoundingSphere();
+    return g;
+  }
+
+  private updateTerrain(budget: number) {
+    const CH = BarracksLevel.CH, cx = this.camera.position.x, cz = this.camera.position.z;
+    const want: { key: number; ci: number; cj: number; lv: number; d: number }[] = [];
+    for (let cj = 0; cj < BarracksLevel.NCZ; cj++)
+      for (let ci = 0; ci < BarracksLevel.NCX; ci++) {
+        const x0 = BarracksLevel.TX0 + ci * CH, z0 = BarracksLevel.TZ0 + cj * CH;
+        const d = Math.hypot(Math.max(x0 - cx, 0, cx - x0 - CH), Math.max(z0 - cz, 0, cz - z0 - CH));
+        let lv = d < 90 ? 0 : d < 200 ? 1 : d < 380 ? 2 : 3;
+        if (this.low) lv = Math.min(3, lv + 1);
+        const key = cj * 1000 + ci;
+        const c = this.chunks.get(key);
+        if (c) c.mesh.visible = d < 560;
+        if (!c || c.lv !== lv) want.push({ key, ci, cj, lv, d });
+      }
+    want.sort((a, b) => a.d - b.d);
+    for (const w of want.slice(0, budget)) {
+      const geo = this.buildChunkGeo(w.ci, w.cj, w.lv);
+      const old = this.chunks.get(w.key);
+      if (old) {
+        old.mesh.geometry.dispose();
+        old.mesh.geometry = geo;
+        old.lv = w.lv;
+      } else {
+        const mesh = new THREE.Mesh(geo, this.green.tMat);
+        mesh.receiveShadow = true;
+        mesh.userData.dynamic = true;
+        this.scene.add(mesh);
+        this.chunks.set(w.key, { lv: w.lv, mesh });
+      }
+    }
+  }
+
   private buildTerrain() {
-    const seg = this.low ? 1.5 : 0.9;
-    const W = MAP.maxX - MAP.minX + 40, D = MAP.maxZ - MAP.minZ + 40;
-    const geo = new THREE.PlaneGeometry(W, D, Math.round(W / seg), Math.round(D / seg));
-    geo.rotateX(-Math.PI / 2);
-    geo.translate((MAP.minX + MAP.maxX) / 2, 0, (MAP.minZ + MAP.maxZ) / 2);
-    const p = geo.attributes.position as THREE.BufferAttribute;
-    for (let i = 0; i < p.count; i++) p.setY(i, terrainHeight(p.getX(i), p.getZ(i)));
-    geo.computeVertexNormals();
-    const n = geo.attributes.normal as THREE.BufferAttribute;
-    const splat = new Float32Array(p.count * 4);
-    for (let i = 0; i < p.count; i++) splat.set(splatAt(p.getX(i), p.getZ(i), n.getY(i)), i * 4);
-    geo.setAttribute("aSplat", new THREE.BufferAttribute(splat, 4));
-    const mesh = new THREE.Mesh(geo, this.green.tMat);
-    mesh.receiveShadow = true;
-    this.scene.add(mesh);
-    // parade ground: packed, raked earth with a painted border
+    this.camera.position.set(this.pos.x || PLAYER_MEET.x, 0, this.pos.z || PLAYER_MEET.z);
+    this.updateTerrain(Infinity);
     const yard = new THREE.Mesh(new THREE.PlaneGeometry(34, 34), new THREE.MeshStandardMaterial({ color: 0x4a4539, roughness: 1, map: stripes("#4a4539", "#433f34", 24) }));
     yard.rotation.x = -Math.PI / 2;
     yard.position.set(0, COMPOUND_Y + 0.02, -55);
@@ -643,9 +723,9 @@ export class BarracksLevel {
     this.scene.add(graves);
     // café terrace: table + stool where the informer watches the street
     const wood = k.Wo;
-    const tg = terrainHeight(-1.5, 54);
-    this.mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.05, 12), wood, -1.4, tg + 0.72, 53.6);
-    this.mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.72, 6), wood, -1.4, tg + 0.36, 53.6);
+    const tg = terrainHeight(-1.5 + DV.x, 54 + DV.z);
+    this.mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.05, 12), wood, -1.4 + DV.x, tg + 0.72, 53.6 + DV.z);
+    this.mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.72, 6), wood, -1.4 + DV.x, tg + 0.36, 53.6 + DV.z);
     // olive press stone at the mill
     const mg = terrainHeight(MILL.x + 6, MILL.z + 4);
     this.mesh(new THREE.CylinderGeometry(1.4, 1.5, 0.6, 20), k.S, MILL.x + 6.5, mg + 0.3, MILL.z + 4.5);
@@ -1187,63 +1267,220 @@ export class BarracksLevel {
     this.scene.add(kefInst);
   }
 
+  // ---------------- vegetation: forest from the map file's forestAt(), instanced per 160 m tile with 2 LODs ----------------
+  private vegTiles: { x: number; z: number; near: THREE.InstancedMesh[]; far: THREE.InstancedMesh[] }[] = [];
+  private vegTimer = 0;
   private buildVegetation() {
     const rng = mulberry32(1954);
     const k = this.green;
-    const ok = (x: number, z: number) => {
+    const nearAny = (x: number, z: number, pts: { x: number; z: number }[], r: number) => pts.some((p) => Math.hypot(x - p.x, z - p.z) < r);
+    const keepClear = [KEF_TOP, CEMETERY, MILL, CHECKPOINT, RALLY, SAFEHOUSE, MESSAOUD, LAKHDAR];
+    const ok = (x: number, z: number, clear: number) => {
       if (x < MAP.minX + 2 || x > MAP.maxX - 2 || z < MAP.minZ + 2 || z > MAP.maxZ - 2) return false;
-      if (insideCompound(x, z, 9) || roadDist(x, z) < 3 || ouedDepth(x, z) > 0.4) return false;
-      if (Math.hypot(x - KEF_TOP.x, z - KEF_TOP.z) < 4 || Math.hypot(x - CEMETERY.x, z - CEMETERY.z) < 9) return false;
-      if (Math.hypot(x - MILL.x, z - MILL.z) < 9 || Math.hypot(x - CHECKPOINT.x, z - CHECKPOINT.z) < 8) return false;
-      return !BOXES.some((b) => x > b.x0 - 2.5 && x < b.x1 + 2.5 && z > b.z0 - 2.5 && z < b.z1 + 2.5);
+      if (insideCompound(x, z, 12) || roadDist(x, z) < clear || ouedDepth(x, z) > 0.4) return false;
+      if (nearAny(x, z, keepClear, 6)) return false;
+      if (Object.values(TOWN).some((t) => Math.hypot(x - t.x, z - t.z) < t.r + 4)) return false;
+      return !boxesIn(x - 2.5, z - 2.5, x + 2.5, z + 2.5).length;
     };
-    const pick = (n: number, near?: { x: number; z: number; r: number }) => {
-      const out: { x: number; z: number }[] = [];
-      let guard = 0;
-      while (out.length < n && guard++ < n * 80) {
-        const x = near ? near.x + (rng() - 0.5) * near.r * 2 : MAP.minX + rng() * (MAP.maxX - MAP.minX);
-        const z = near ? near.z + (rng() - 0.5) * near.r * 2 : MAP.minZ + rng() * (MAP.maxZ - MAP.minZ);
-        if (ok(x, z)) out.push({ x, z });
+    type Sp = { c: boolean; seed: number; P: unknown; bark: number; leaf: number; s: [number, number]; pts: { x: number; z: number; r: number; s: number }[] };
+    const sp: Sp[] = [
+      { c: false, seed: 11, P: { ...k.OAK, H: 6, wob: 0.45 }, bark: 0, leaf: 0, s: [0.45, 0.65], pts: [] }, // olives
+      { c: false, seed: 37, P: { ...k.OAK, H: 8.5, wob: 0.3, n0: 6 }, bark: 0, leaf: 0, s: [0.5, 0.75], pts: [] }, // holm oaks
+      { c: true, seed: 7, P: k.CONI, bark: 2, leaf: 4, s: [0.55, 0.9], pts: [] }, // Aurès cedars
+      { c: false, seed: 3, P: k.BUSH, bark: 0, leaf: 0, s: [0.8, 1.35], pts: [] }, // scrub
+    ];
+    const cell = this.low ? 8 : 6;
+    const groves = [{ x: MILL.x, z: MILL.z, r: 55 }, { x: SAFEHOUSE.x, z: SAFEHOUSE.z, r: 75 }, { x: CEMETERY.x, z: CEMETERY.z, r: 30 }];
+    for (let z = MAP.minZ; z < MAP.maxZ; z += cell)
+      for (let x = MAP.minX; x < MAP.maxX; x += cell) {
+        const px = x + rng() * cell, pz = z + rng() * cell;
+        const f = forestAt(px, pz);
+        const grove = groves.some((g) => Math.hypot(px - g.x, pz - g.z) < g.r && Math.hypot(px - g.x, pz - g.z) > 12);
+        // scrub on the approach between the Kef and the west fence: the cover the squad crawls through
+        const approach = px > -105 && px < -42 && pz > -95 && pz < 10;
+        const r = rng();
+        let si = -1;
+        if (grove && r < 0.3) si = 0;
+        else if (r < smoothstep(0.5, 0.72, f) * 0.75) si = pz < -110 || rng() < 0.35 ? 2 : 1;
+        else if (r < 0.045 + smoothstep(0.42, 0.6, f) * 0.12 + (approach ? 0.22 : 0)) si = 3;
+        else if (r < 0.06 && f > 0.4) si = 1;
+        if (si < 0 || !ok(px, pz, si === 3 ? 1.5 : 3)) continue;
+        sp[si].pts.push({ x: px, z: pz, r: rng() * Math.PI * 2, s: sp[si].s[0] + rng() * (sp[si].s[1] - sp[si].s[0]) });
       }
-      return out;
-    };
-    const species = [
-      { c: false, seed: 11, P: { ...k.OAK, H: 6, wob: 0.45 }, bark: 0, leaf: 0, s: [0.45, 0.65] }, // olives
-      { c: false, seed: 37, P: { ...k.OAK, H: 8.5, wob: 0.3, n0: 6 }, bark: 0, leaf: 0, s: [0.5, 0.7] },
-      { c: true, seed: 7, P: k.CONI, bark: 2, leaf: 4, s: [0.55, 0.85] },
-      { c: false, seed: 3, P: k.BUSH, bark: 0, leaf: 0, s: [0.8, 1.3] },
-    ];
-    const lists = [
-      [...pick(this.low ? 14 : 26, { x: -60, z: -15, r: 22 }), ...pick(10, { x: -30, z: 30, r: 16 }), ...pick(8, { x: 40, z: 30, r: 20 })], // olive groves
-      pick(this.low ? 16 : 28),
-      [...pick(this.low ? 10 : 18, { x: -70, z: -85, r: 20 }), ...pick(8, { x: 60, z: -80, r: 25 })], // cedars on the mountain side
-      [...pick(this.low ? 30 : 55), ...pick(16, { x: -45, z: -40, r: 14 })], // scrub — cover on the approach
-    ];
-    const dummy = new THREE.Object3D();
-    species.forEach((sp, si) => {
-      const list = lists[si];
-      if (!list.length) return;
-      const T = sp.c ? k.genConifer(sp.seed, sp.P) : k.genBroad(sp.seed, sp.P);
-      const bark = new THREE.InstancedMesh((this.low ? T.b1 : T.b0).geo(false), k.barkMats[sp.bark], list.length);
-      const leafLod = this.low && !sp.c ? sp.leaf + 1 : sp.leaf;
-      const leaves = new THREE.InstancedMesh((this.low ? T.l1 : T.l0).geo(true), k.leafMats[leafLod], list.length);
-      leaves.customDepthMaterial = k.depthMats[leafLod];
-      list.forEach((t, i) => {
-        const g = terrainHeight(t.x, t.z);
-        dummy.position.set(t.x, g - 0.2, t.z);
-        dummy.rotation.set(0, rng() * Math.PI * 2, 0);
-        dummy.scale.setScalar(sp.s[0] + rng() * (sp.s[1] - sp.s[0]));
-        dummy.updateMatrix();
-        bark.setMatrixAt(i, dummy.matrix);
-        leaves.setMatrixAt(i, dummy.matrix);
-        if (si !== 3) BOXES.push({ x0: t.x - 0.3, x1: t.x + 0.3, z0: t.z - 0.3, z1: t.z + 0.3, y0: g - 0.5, top: g + 2.6, kind: "solid", id: "tree" });
-        else BOXES.push({ x0: t.x - 0.7, x1: t.x + 0.7, z0: t.z - 0.7, z1: t.z + 0.7, y0: g + 0.15, top: g + 1.05, kind: "cover", id: "bush" });
-      });
-      bark.castShadow = leaves.castShadow = true;
-      bark.receiveShadow = leaves.receiveShadow = true;
-      this.scene.add(bark, leaves);
+    const TS = 160, dummy = new THREE.Object3D();
+    const tiles = new Map<number, { x: number; z: number; near: THREE.InstancedMesh[]; far: THREE.InstancedMesh[] }>();
+    sp.forEach((s, si) => {
+      if (!s.pts.length) return;
+      const T = s.c ? k.genConifer(s.seed, s.P) : k.genBroad(s.seed, s.P);
+      const g0b = T.b0.geo(false), g0l = T.l0.geo(true), g1b = T.b1.geo(false), g1l = T.l1.geo(true);
+      const leafFar = s.c ? s.leaf : s.leaf + 1;
+      const byTile = new Map<number, typeof s.pts>();
+      for (const p of s.pts) {
+        const key = Math.floor((p.z - MAP.minZ) / TS) * 100 + Math.floor((p.x - MAP.minX) / TS);
+        if (!byTile.has(key)) byTile.set(key, []);
+        byTile.get(key)!.push(p);
+        const g = terrainHeight(p.x, p.z);
+        if (si !== 3) BOXES.push({ x0: p.x - 0.3, x1: p.x + 0.3, z0: p.z - 0.3, z1: p.z + 0.3, y0: g - 0.5, top: g + 2.6, kind: "solid", id: "tree" });
+        else BOXES.push({ x0: p.x - 0.7, x1: p.x + 0.7, z0: p.z - 0.7, z1: p.z + 0.7, y0: g + 0.15, top: g + 1.05, kind: "cover", id: "bush" });
+      }
+      for (const [key, list] of byTile) {
+        let tile = tiles.get(key);
+        if (!tile) tiles.set(key, (tile = { x: MAP.minX + ((key % 100) + 0.5) * TS, z: MAP.minZ + (Math.floor(key / 100) + 0.5) * TS, near: [], far: [] }));
+        const mk = (bg: THREE.BufferGeometry, lg: THREE.BufferGeometry, leaf: number, near: boolean) => {
+          const bark = new THREE.InstancedMesh(bg, k.barkMats[s.bark], list.length);
+          const leaves = new THREE.InstancedMesh(lg, k.leafMats[leaf], list.length);
+          leaves.customDepthMaterial = k.depthMats[leaf];
+          list.forEach((p, i) => {
+            dummy.position.set(p.x, terrainHeight(p.x, p.z) - 0.2, p.z);
+            dummy.rotation.set(0, p.r, 0);
+            dummy.scale.setScalar(p.s);
+            dummy.updateMatrix();
+            bark.setMatrixAt(i, dummy.matrix);
+            leaves.setMatrixAt(i, dummy.matrix);
+          });
+          for (const m of [bark, leaves]) {
+            m.castShadow = near;
+            m.receiveShadow = true;
+            m.computeBoundingSphere();
+            m.userData.dynamic = true;
+            m.visible = false;
+            this.scene.add(m);
+            (near ? tile!.near : tile!.far).push(m);
+          }
+        };
+        if (!this.low) mk(g0b, g0l, s.leaf, true);
+        mk(g1b, g1l, leafFar, this.low);
+      }
     });
+    this.vegTiles = [...tiles.values()];
+    this.updateVegetation();
     rebuildNav();
+  }
+  private updateVegetation() {
+    const cx = this.camera.position.x, cz = this.camera.position.z;
+    for (const t of this.vegTiles) {
+      const d = Math.max(0, Math.hypot(t.x - cx, t.z - cz) - 113);
+      const near = t.near.length > 0 && d < 70;
+      for (const m of t.near) m.visible = near;
+      for (const m of t.far) m.visible = !near && d < 300;
+    }
+  }
+
+  // ---------------- Khenchela: the other targets of the night, lit in the distance ----------------
+  private townGlows: THREE.Sprite[] = [];
+  private townEvents: { t: number; x: number; z: number; kind: "shots" | "blast" | "dark" }[] = [];
+  private townFlashes: { s: THREE.Sprite; life: number }[] = [];
+  private buildTown() {
+    const k = this.kit;
+    const mats = new Map<number, THREE.MeshStandardMaterial>();
+    const mat = (c: number) => mats.get(c) ?? (mats.set(c, new THREE.MeshStandardMaterial({ color: c, roughness: 0.9, map: k.A.map ?? null })), mats.get(c)!);
+    const winLit = new THREE.MeshStandardMaterial({ color: 0x0a0705, emissive: 0xffb25e, emissiveIntensity: 1.6 });
+    for (const b of TOWN_BLOCKS) {
+      const g = terrainHeight(b.x, b.z);
+      this.mesh(k.U(boxGeo(b.w, b.h + 0.6, b.d), 0.5), mat(b.c), b.x, g - 0.6 + (b.h + 0.6) / 2, b.z);
+      if (b.wall || b.h < 4) continue;
+      // windows on the long faces + a fog-free glow so the town reads from the hills
+      const n = Math.max(1, Math.floor(b.w / 4));
+      for (let i = 0; i < n; i++) {
+        const x = b.x - b.w / 2 + (b.w / n) * (i + 0.5);
+        for (const side of [-1, 1]) {
+          for (const y of b.h > 6 ? [2.2, 5.2] : [2.2]) {
+            const lit = (i * 7 + y * 3 + side + b.x) % 3 > 0.9;
+            const w = this.mesh(new THREE.PlaneGeometry(1.1, 1.2), lit ? winLit : mat(0x0c0e12), x, g + y, b.z + side * (b.d / 2 + 0.02), side > 0 ? 0 : Math.PI);
+            w.castShadow = false;
+            if (lit && side > 0) {
+              const s = makeGlowSprite(0xffb25e, 1.1, 4.5, false);
+              s.position.set(x, g + y, b.z + side * (b.d / 2 + 0.4));
+              s.userData.dynamic = true;
+              this.scene.add(s);
+              this.townGlows.push(s);
+            }
+          }
+        }
+      }
+    }
+    // the transformer's pylons and lines feeding the town
+    const pyl = new THREE.MeshStandardMaterial({ color: 0x3a3a36, roughness: 0.6, metalness: 0.5 });
+    const P = TOWN.power;
+    const line: THREE.Vector3[] = [];
+    for (let i = 0; i < 6; i++) {
+      const x = P.x - 40 - i * 62, z = P.z - 30 - i * 44;
+      const g = terrainHeight(x, z);
+      this.mesh(new THREE.CylinderGeometry(0.12, 0.2, 10, 6), pyl, x, g + 5, z);
+      this.mesh(new THREE.BoxGeometry(2.4, 0.15, 0.15), pyl, x, g + 9.6, z);
+      line.push(new THREE.Vector3(x, g + 9.6, z));
+    }
+    this.scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(line), new THREE.LineBasicMaterial({ color: 0x151515 })));
+    // lit houses also glow from afar
+    for (const h of TOWN_HOUSES) {
+      if (!h.lit) continue;
+      const s = makeGlowSprite(0xffa04a, 0.9, 3.6, false);
+      s.position.set(h.x, terrainHeight(h.x, h.z) + 1.6, h.z);
+      s.userData.dynamic = true;
+      this.scene.add(s);
+      this.townGlows.push(s);
+    }
+    // street lamps along the town's main roads
+    for (const r of ROADS) {
+      if (r.t !== "main") continue;
+      for (let i = 6; i < r.pts.length; i += 14) {
+        const p = r.pts[i];
+        if (Math.hypot(p.x - TOWN.hakim.x, p.z - TOWN.hakim.z) > 200 && Math.hypot(p.x - TOWN.police.x, p.z - TOWN.police.z) > 90) continue;
+        const q = r.pts[Math.min(r.pts.length - 1, i + 1)], tl = Math.hypot(q.x - p.x, q.z - p.z) || 1;
+        const x = p.x + ((q.z - p.z) / tl) * (r.hw + 0.8), z = p.z - ((q.x - p.x) / tl) * (r.hw + 0.8);
+        this.addLamp(new THREE.Vector3(x, terrainHeight(x, z) + 3.6, z), 14, 13, false, false, true);
+        const far = makeGlowSprite(0xffe2b0, 1, 5, false);
+        far.position.set(x, terrainHeight(x, z) + 3.6, z);
+        far.userData.dynamic = true;
+        this.scene.add(far);
+        this.townGlows.push(far);
+        this.lamps[this.lamps.length - 1].town = true;
+      }
+    }
+    for (let i = 0; i < 6; i++) {
+      const s = makeGlowSprite(0xffc070, 3, 1, false);
+      s.visible = false;
+      this.scene.add(s);
+      this.townFlashes.push({ s, life: 0 });
+    }
+  }
+  /** midnight: the other squads strike Khenchela */
+  private townAttack() {
+    const t0 = this.game.elapsed;
+    const T = TOWN;
+    for (let i = 0; i < 10; i++) this.townEvents.push({ t: t0 + 1.5 + i * 0.7 + Math.random() * 0.5, x: T.gend.x + (Math.random() - 0.5) * 40, z: T.gend.z + (Math.random() - 0.5) * 30, kind: "shots" });
+    for (let i = 0; i < 8; i++) this.townEvents.push({ t: t0 + 3 + i * 0.9 + Math.random() * 0.6, x: T.police.x + (Math.random() - 0.5) * 20, z: T.police.z + (Math.random() - 0.5) * 20, kind: "shots" });
+    this.townEvents.push({ t: t0 + 6.5, x: T.power.x, z: T.power.z, kind: "blast" });
+    this.townEvents.push({ t: t0 + 7.2, x: T.power.x, z: T.power.z, kind: "dark" });
+  }
+  private updateTown(dt: number) {
+    const now = this.game.elapsed;
+    for (let i = this.townEvents.length - 1; i >= 0; i--) {
+      const e = this.townEvents[i];
+      if (e.t > now) continue;
+      this.townEvents.splice(i, 1);
+      const p = new THREE.Vector3(e.x, terrainHeight(e.x, e.z) + 2, e.z);
+      const d = p.distanceTo(this.pos);
+      if (e.kind === "dark") {
+        for (const s of this.townGlows) s.visible = false;
+        for (const l of this.lamps) if (l.town) l.on = false;
+        this.bark("adjoul", "darktown", "انطفأت خنشلة! الإخوة ضربوا المحوّل.", "Khenchela has gone dark! The brothers hit the transformer.");
+        continue;
+      }
+      const f = this.townFlashes.find((q) => q.life <= 0) ?? this.townFlashes[0];
+      f.s.position.copy(p);
+      f.s.scale.setScalar(e.kind === "blast" ? 40 : 5);
+      f.s.visible = true;
+      f.life = e.kind === "blast" ? 1.4 : 0.12;
+      if (e.kind === "blast") this.opts.audio?.explosion();
+      else this.opts.audio?.shot(Math.min(115, d / 4), this.panOf(p));
+    }
+    for (const f of this.townFlashes) {
+      if (f.life <= 0) continue;
+      f.life -= dt;
+      f.s.visible = f.life > 0;
+      (f.s.material as THREE.SpriteMaterial).opacity = Math.min(1, f.life * 3);
+    }
   }
 
   private addLamp(p: THREE.Vector3, power: number, radius: number, grid: boolean, warm = true, post = true) {
@@ -1284,9 +1521,9 @@ export class BarracksLevel {
     // compound grid lamps (all fed by the generator)
     for (const [x, z] of [[-4.6, -24.6], [4.6, -24.6], [-12, -40], [12, -40], [-12, -70], [12, -70], [-2, -74.6], [24, -75.9], [14, -34.9], [31, -63]] as const) this.addLamp(new THREE.Vector3(x, y + 3.6, z), 22, 15, true, false, !(x === 24 || x === -2 || x === 14));
     // village and mill (oil lamps)
-    this.addLamp(new THREE.Vector3(-2.6, terrainHeight(-2.6, 53) + 2.4, 53.1), 9, 9, false, true, false);
-    this.addLamp(new THREE.Vector3(8.5, terrainHeight(8.5, 57.4) + 3, 57.4), 12, 12, false);
-    this.addLamp(new THREE.Vector3(24, terrainHeight(24, 66.6) + 2.3, 66.6), 7, 8, false, true, false);
+    this.addLamp(new THREE.Vector3(-2.6 + DV.x, terrainHeight(-2.6 + DV.x, 53 + DV.z) + 2.4, 53.1 + DV.z), 9, 9, false, true, false);
+    this.addLamp(new THREE.Vector3(8.5 + DV.x, terrainHeight(8.5 + DV.x, 57.4 + DV.z) + 3, 57.4 + DV.z), 12, 12, false);
+    this.addLamp(new THREE.Vector3(24 + DV.x, terrainHeight(24 + DV.x, 66.6 + DV.z) + 2.3, 66.6 + DV.z), 7, 8, false, true, false);
     this.addLamp(new THREE.Vector3(CHECKPOINT.x + 3, terrainHeight(CHECKPOINT.x + 3, CHECKPOINT.z) + 2.8, CHECKPOINT.z + 1), 14, 12, false);
     this.addLamp(new THREE.Vector3(TABLE.x, terrainHeight(TABLE.x, TABLE.z) + 1.05, TABLE.z), 5, 6, false, true, false);
     this.addLamp(new THREE.Vector3(CEMETERY.x - 1.5, terrainHeight(CEMETERY.x, CEMETERY.z) + 0.4, CEMETERY.z + 0.3), 2.5, 3.5, false, true, false);
@@ -1695,7 +1932,7 @@ export class BarracksLevel {
     const a = this.allies[0];
     a.active = false;
     if (!plan || !this.game.armed) return;
-    const p = plan.diversion === "fire" ? [DIVERSION_FIRE.x - 6, DIVERSION_FIRE.z + 6] : plan.diversion === "phone" ? [PHONE_POLE.x - 2, PHONE_POLE.z + 3] : plan.entry === "gate" ? [GATE.x - 7, GATE.z + 15] : [-64, -76];
+    const p = plan.diversion === "fire" ? [DIVERSION_FIRE.x - 6, DIVERSION_FIRE.z + 6] : plan.diversion === "phone" ? [PHONE_POLE.x - 2, PHONE_POLE.z + 3] : plan.entry === "gate" ? [GATE.x - 7, GATE.z + 15] : [-92, -112];
     a.pos.set(p[0], groundAt(p[0], p[1]).y, p[1]);
     a.group.position.copy(a.pos);
     a.group.rotation.y = Math.atan2(-p[0], -55 - p[1]);
@@ -2238,6 +2475,7 @@ export class BarracksLevel {
     this.garrison.phoneCut = true;
     this.garrison.lastKnownAge = 30;
     this.opts.onFinale?.();
+    this.townAttack();
     this.bark("laghrour", "boom", "الله أكبر! في كل الأوراس الآن… الثورة بدأت.", "Allahu akbar! All over the Aurès, right now… the revolution has begun.");
     if (Math.hypot(this.pos.x - RALLY.x, this.pos.z - RALLY.z) < 9) g.finaleT = 5;
   }
@@ -2288,6 +2526,15 @@ export class BarracksLevel {
         return;
       }
     } else g.restrictT = Math.max(0, g.restrictT - dt * 2);
+
+    // ---- travel beats: the squad talks on the long walks ----
+    const dist = (p: { x: number; z: number }) => Math.hypot(this.pos.x - p.x, this.pos.z - p.z);
+    if (g.stage === "escape" && dist(SAFEHOUSE) > 45) this.bark("adjoul", "leave", "المقبرة جنوباً على طرف الوادي، مئة وخمسون متراً. دورية الدرك تمشي في المسلك شرقاً — لا نقترب منها.", "The cemetery is 150 m south, on the edge of the oued. The gendarme patrol walks the track to the east — keep clear of it.");
+    if (g.stage === "recon" && this.pos.z < 300 && this.pos.z > 120) this.bark("laghrour", "town", "انظر شرقاً… أضواء خنشلة. الإخوة هناك ينتظرون منتصف الليل مثلنا: الدرك، الشرطة، المحوّل.", "Look east… the lights of Khenchela. The brothers there wait for midnight like us: the gendarmerie, the police, the transformer.");
+    if (g.stage === "recon" && dist(KEF) < 45) this.bark("azawi", "keffoot", "اصعد إلى القمة وانبطح. كشّافاتهم لا تبلغ هنا، لكن المنظار يبلغهم.", "Climb to the top and lie flat. Their searchlights don't reach here — but the binoculars reach them.");
+    if (g.stage === "plan" && dist(MILL) < 110) this.bark("adjoul", "millnear", "المعصرة على ضفّة الوادي. بوستة سبقنا بالعبوات.", "The mill is on the bank of the oued. Boucetta got there ahead of us with the charges.");
+    if (g.stage === "infiltrate" && dist(MILL) > 70) this.bark("laghrour", "approach", "مئتا متر حتى السياج. الحصى قرب الطريق يفضحنا — نمشي في الوادي، منحنين.", "Two hundred metres to the wire. The gravel by the road gives us away — we walk the oued, crouched.");
+    if (g.stage === "exfil" && g.exploded && dist(RALLY) < 130) this.bark("laghrour", "nearrally", "نقطة التفرّق أمامنا. من هناك كل رجل إلى جبله.", "The dispersal point is ahead. From there every man to his mountain.");
 
     // ---- stage triggers ----
     if (g.stage === "escape" && Math.hypot(this.pos.x - CEMETERY.x, this.pos.z - CEMETERY.z) < 8) g.stage = "meet";
@@ -2393,7 +2640,7 @@ export class BarracksLevel {
         if (s.tagged || !s.alive || !this.garrison.zoneActive[s.def.zone] || s.def.zone !== "compound") continue;
         const c = s.pos.clone().setY(s.pos.y + 1.1).sub(origin);
         const d = c.length();
-        if (d > 130) continue;
+        if (d > 220) continue;
         const ang = c.normalize().angleTo(dir);
         if (ang < ba && lineClear(origin.x, origin.y, origin.z, s.pos.x, s.pos.y + 1.2, s.pos.z)) {
           best = s;
@@ -2715,6 +2962,16 @@ export class BarracksLevel {
       this.grassTimer = 0.2;
       this.updateGrass(1);
     }
+    this.chunkTimer -= dt;
+    if (this.chunkTimer <= 0) {
+      this.chunkTimer = 0.12;
+      this.updateTerrain(1);
+    }
+    this.vegTimer -= dt;
+    if (this.vegTimer <= 0) {
+      this.vegTimer = 0.5;
+      this.updateVegetation();
+    }
     // camera
     const hs = pl.hs;
     const bobAmp = Math.min(hs / 5, 1) * (1 - this.crouchAmt * 0.5);
@@ -2739,6 +2996,9 @@ export class BarracksLevel {
       this.camera.rotation.z += (Math.random() - 0.5) * a * 0.3;
       this.shake *= Math.exp(-dt * 2.5);
     }
+    const fog = this.scene.fog as THREE.FogExp2;
+    fog.density += ((binoc ? FOG_BINOC : FOG) - fog.density) * (1 - Math.exp(-dt * 6));
+    this.updateTown(dt);
     const fov = this.cine.on ? 44 : binoc ? 18 : this.fovBase;
     if (Math.abs(this.camera.fov - fov) > 0.05) {
       this.camera.fov += (fov - this.camera.fov) * (1 - Math.exp(-dt * 10));
@@ -2949,7 +3209,7 @@ export class BarracksLevel {
     g.binoculars = true;
     if (stage === "recon") {
       g.stage = "recon";
-      this.teleport(KEF_TOP.x, KEF_TOP.z, Math.atan2(-71, 55));
+      this.teleport(KEF_TOP.x, KEF_TOP.z, Math.atan2(KEF_TOP.x, KEF_TOP.z + 55));
     } else if (stage === "plan") {
       g.stage = "plan";
       this.teleport(LAKHDAR.x + 1.6, LAKHDAR.z + 0.4, Math.PI / 2);
@@ -2977,6 +3237,6 @@ export class BarracksLevel {
   }
   /** used by the planning UI to draw the static plan */
   static layout() {
-    return { BUILDINGS, TOWERS, COMPOUND, GATE, WIRE, DRAIN, GENERATOR, ARMORY, RALLY, DIVERSION_FIRE, PHONE_POLE, OUED, KEF, MILL, CHECKPOINT, VILLAGE, CEMETERY, SPAWN, HQ, TRUCKS, RESTRICT_PAD };
+    return { BUILDINGS, TOWERS, COMPOUND, GATE, WIRE, DRAIN, GENERATOR, ARMORY, RALLY, DIVERSION_FIRE, PHONE_POLE, OUED, KEF, MILL, CHECKPOINT, VILLAGE, CEMETERY, SPAWN, HQ, TRUCKS, RESTRICT_PAD, ROAD_SETS, ROADS, TOWN, TOWN_BLOCKS, SAFEHOUSE, KEF_TOP, MAP };
   }
 }

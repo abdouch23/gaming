@@ -32,6 +32,7 @@ const DIVERSIONS: { id: Diversion; ar: string; en: string; noteAr: string; noteE
   { id: "cover", ar: "تغطية الانسحاب", en: "Cover the retreat", noteAr: "بوستة يكمن عند مخرج الوادي ويطلق النار على من يلاحقكم.", noteEn: "Boucetta lies in ambush at the oued and fires on your pursuers." },
 ];
 
+const TOWN_LABEL = { x: 330, z: 230 };
 const STATE_LABEL: Record<string, string> = { follow: "يتبع", hold: "ثابت", strike: "يتسلّل", fight: "يشتبك" };
 
 type Dialogue = { kind: "prologue" | Who; lines: Line[]; i: number; awaiting: boolean };
@@ -120,81 +121,97 @@ function DialogueView({ d, onNext, onAnswer }: { d: Dialogue; onNext: () => void
 // ---------------- tactical map (planning board + M map) ----------------
 function TacticalMap({ plan, live, full }: { plan: Plan | null; live: MapState | null; full?: boolean }) {
   const L = useMemo(() => BarracksLevel.layout(), []);
-  const vb = full ? "-96 -108 192 200" : "-98 -110 150 102";
-  const path = (pts: [number, number][]) => pts.map((p, i) => `${i ? "L" : "M"}${p[0]} ${p[1]}`).join(" ");
+  // full map: the whole 1 km²; planning board: the barracks, the Kef and the mill
+  const vb = full ? [L.MAP.minX, L.MAP.minZ, L.MAP.maxX - L.MAP.minX, L.MAP.maxZ - L.MAP.minZ] : [-275, -265, 330, 400];
+  const k = full ? 4.2 : 1.9; // label / stroke scale
+  const path = (pts: [number, number][]) => pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(" ");
   const route: Record<Entry, [number, number][]> = {
-    drain: [[-66, -30], [-60, -40], [-50, -47.5], [L.DRAIN.x - 1, L.DRAIN.z]],
-    wire: [[-66, -30], [-62, -60], [-62, -92], [L.WIRE.x, -92], [L.WIRE.x, L.WIRE.z]],
-    gate: [[-66, -30], [-50, -14], [-18, -8], [L.GATE.x, L.GATE.z + 2]],
+    drain: [[L.MILL.x + 8, L.MILL.z], [-200, 70], [-160, 36], [-138, 6], [-104, -30], [-70, -47], [L.DRAIN.x - 1, L.DRAIN.z]],
+    wire: [[L.MILL.x + 8, L.MILL.z], [-200, 70], [-138, 6], [-92, -110], [-30, -105], [L.WIRE.x, -100], [L.WIRE.x, L.WIRE.z]],
+    gate: [[L.MILL.x + 8, L.MILL.z], [-200, 70], [-120, 40], [-40, 30], [0, 10], [L.GATE.x, L.GATE.z + 2]],
   };
   const c = L.COMPOUND;
+  const T = (x: number, y: number, t: string, col = "rgba(240,240,230,0.7)", size = 1) => <text x={x} y={y} fontSize={2.4 * k * size} fill={col} textAnchor="middle">{t}</text>;
   return (
-    <svg viewBox={vb} className="h-full w-full" data-testid={full ? "map-svg" : "plan-svg"}>
+    <svg viewBox={vb.join(" ")} className="h-full w-full" data-testid={full ? "map-svg" : "plan-svg"}>
       <defs>
-        <pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M10 0H0V10" fill="none" stroke="rgba(207,230,238,0.06)" strokeWidth="0.3" /></pattern>
+        <pattern id={`grid${full ? 1 : 0}`} width="50" height="50" patternUnits="userSpaceOnUse"><path d="M50 0H0V50" fill="none" stroke="rgba(207,230,238,0.07)" strokeWidth={0.3 * k} /></pattern>
       </defs>
-      <rect x="-200" y="-200" width="400" height="400" fill="url(#grid)" />
-      <path d={path(L.OUED)} fill="none" stroke="rgba(120,170,200,0.35)" strokeWidth="5" strokeLinecap="round" />
-      <ellipse cx={L.KEF.x} cy={L.KEF.z} rx={L.KEF.r * 1.25} ry={L.KEF.r} fill="rgba(200,190,160,0.08)" stroke="rgba(200,190,160,0.35)" strokeDasharray="1.5 1.5" strokeWidth="0.4" />
-      <text x={L.KEF.x} y={L.KEF.z + 1} fontSize="2.6" fill="rgba(230,220,190,0.6)" textAnchor="middle">كاف الغراب</text>
-      <rect x={L.MILL.x - 4} y={L.MILL.z - 3.25} width="8" height="6.5" fill="rgba(232,176,74,0.35)" />
-      <text x={L.MILL.x} y={L.MILL.z + 7} fontSize="2.6" fill="rgba(232,176,74,0.85)" textAnchor="middle">المعصرة</text>
-      <circle cx={L.RALLY.x} cy={L.RALLY.z} r="3" fill="none" stroke="rgba(140,230,170,0.8)" strokeWidth="0.6" />
-      <text x={L.RALLY.x + 4} y={L.RALLY.z + 1} fontSize="2.6" fill="rgba(140,230,170,0.85)">التجمّع</text>
-      <rect x={c.minX - L.RESTRICT_PAD} y={c.minZ - L.RESTRICT_PAD} width={c.maxX - c.minX + 2 * L.RESTRICT_PAD} height={c.maxZ - c.minZ + 2 * L.RESTRICT_PAD} fill="none" stroke={plan ? "rgba(255,90,70,0.12)" : "rgba(255,90,70,0.45)"} strokeWidth="0.4" strokeDasharray="2 1" />
-      <rect x={c.minX} y={c.minZ} width={c.maxX - c.minX} height={c.maxZ - c.minZ} fill="rgba(207,230,238,0.04)" stroke="rgba(207,230,238,0.5)" strokeWidth="0.4" strokeDasharray="1 0.6" />
-      <rect x="-17" y="-72" width="34" height="34" fill="rgba(207,230,238,0.04)" />
+      <rect x={vb[0] - 50} y={vb[1] - 50} width={vb[2] + 100} height={vb[3] + 100} fill={`url(#grid${full ? 1 : 0})`} />
+      {L.ROADS.map((r, i) => (
+        <path key={`road${i}`} d={path(r.pts.map((p) => [p.x, p.z] as [number, number]))} fill="none" stroke={r.t === "main" ? "rgba(200,205,212,0.45)" : r.t === "track" ? "rgba(160,125,80,0.5)" : "rgba(160,125,80,0.3)"} strokeWidth={r.t === "main" ? 2.2 * k * 0.5 : 1.4 * k * 0.5} strokeDasharray={r.t === "track" ? `${3 * k} ${1.5 * k}` : undefined} />
+      ))}
+      <path d={path(L.OUED)} fill="none" stroke="rgba(120,170,200,0.4)" strokeWidth={full ? 7 : 5} strokeLinecap="round" />
+      <ellipse cx={L.KEF.x} cy={L.KEF.z} rx={L.KEF.r * 1.25} ry={L.KEF.r} fill="rgba(200,190,160,0.1)" stroke="rgba(200,190,160,0.4)" strokeDasharray="1.5 1.5" strokeWidth={0.4 * k} />
+      {T(L.KEF.x, L.KEF.z + L.KEF.r + 3 * k, "كاف الغراب", "rgba(230,220,190,0.7)")}
+      <rect x={L.MILL.x - 4} y={L.MILL.z - 3.25} width="8" height="6.5" fill="rgba(232,176,74,0.6)" />
+      {T(L.MILL.x, L.MILL.z + 4 * k, "المعصرة", "rgba(232,176,74,0.9)")}
+      <circle cx={L.RALLY.x} cy={L.RALLY.z} r={3 * k} fill="none" stroke="rgba(140,230,170,0.85)" strokeWidth={0.6 * k} />
+      {T(L.RALLY.x, L.RALLY.z + 6 * k, "نقطة التفرّق", "rgba(140,230,170,0.9)")}
+      <rect x={c.minX - L.RESTRICT_PAD} y={c.minZ - L.RESTRICT_PAD} width={c.maxX - c.minX + 2 * L.RESTRICT_PAD} height={c.maxZ - c.minZ + 2 * L.RESTRICT_PAD} fill="none" stroke={plan ? "rgba(255,90,70,0.12)" : "rgba(255,90,70,0.5)"} strokeWidth={0.4 * k} strokeDasharray="2 1" />
+      <rect x={c.minX} y={c.minZ} width={c.maxX - c.minX} height={c.maxZ - c.minZ} fill="rgba(207,230,238,0.05)" stroke="rgba(207,230,238,0.55)" strokeWidth={0.4 * k} />
       {L.BUILDINGS.map((b) => (
         <g key={b.id}>
-          <rect x={b.x - b.w / 2} y={b.z - b.d / 2} width={b.w} height={b.d} fill={b.kind === "armory" ? "rgba(232,176,74,0.55)" : b.kind === "hq" ? "rgba(140,190,255,0.35)" : "rgba(207,230,238,0.18)"} stroke="rgba(207,230,238,0.45)" strokeWidth="0.25" />
-          {b.kind === "hq" && <path d="M-3 -83 V-75 M3 -83 V-75 M3 -79 H11" stroke="rgba(207,230,238,0.5)" strokeWidth="0.25" />}
-          <text x={b.x} y={b.z + 0.9} fontSize={b.kind === "barracks" ? 2.2 : 2.4} fill="rgba(240,240,230,0.75)" textAnchor="middle">{b.kind === "barracks" ? b.id.slice(1) : b.ar}</text>
+          <rect x={b.x - b.w / 2} y={b.z - b.d / 2} width={b.w} height={b.d} fill={b.kind === "armory" ? "rgba(232,176,74,0.6)" : b.kind === "hq" ? "rgba(140,190,255,0.4)" : "rgba(207,230,238,0.2)"} />
+          {!full && T(b.x, b.z + 0.9, b.kind === "barracks" ? b.id.slice(1) : b.ar, "rgba(240,240,230,0.8)", 0.5)}
         </g>
       ))}
+      {full && T(0, c.minZ - 5 * k, "الثكنة العسكرية", "rgba(255,190,90,0.9)")}
       {L.TRUCKS.map((t, i) => (
-        <rect key={`truck${i}`} x={t.x - 1.2} y={t.z - 3.3} width="2.4" height="6.6" fill={live?.exploded ? "rgba(30,20,15,0.9)" : live?.charges[i] ? "rgba(255,70,50,0.8)" : "rgba(160,170,130,0.55)"} stroke="rgba(255,120,90,0.6)" strokeWidth="0.25" />
+        <rect key={`truck${i}`} x={t.x - 1.2} y={t.z - 3.3} width="2.4" height="6.6" fill={live?.exploded ? "rgba(30,20,15,0.9)" : live?.charges[i] ? "rgba(255,70,50,0.85)" : "rgba(160,170,130,0.6)"} />
       ))}
       {L.TOWERS.map(([x, z], i) => (
         <g key={`tower${i}`}>
-          {(i === 1 || i === 2) && <circle cx={x} cy={z} r="30" fill="rgba(220,235,255,0.04)" stroke="rgba(220,235,255,0.25)" strokeWidth="0.3" strokeDasharray="1 1" />}
-          <rect x={x - 1.4} y={z - 1.4} width="2.8" height="2.8" fill="rgba(220,235,255,0.6)" />
+          {(i === 1 || i === 2) && <circle cx={x} cy={z} r="30" fill="rgba(220,235,255,0.05)" stroke="rgba(220,235,255,0.25)" strokeWidth={0.3 * k} strokeDasharray="1 1" />}
+          <rect x={x - 1.4} y={z - 1.4} width="2.8" height="2.8" fill="rgba(220,235,255,0.65)" />
         </g>
       ))}
       <circle cx={L.GENERATOR.x} cy={L.GENERATOR.z} r="1.2" fill="#6dff7a" opacity={live?.generatorOff ? 0.2 : 0.8} />
-      <circle cx={L.DIVERSION_FIRE.x} cy={L.DIVERSION_FIRE.z} r="1.4" fill="#ff8a3a" opacity={plan?.diversion === "fire" ? 0.9 : 0.25} />
-      <circle cx={L.PHONE_POLE.x} cy={L.PHONE_POLE.z} r="1" fill="#cfe6ee" opacity={plan?.diversion === "phone" ? 0.9 : 0.25} />
+      <circle cx={L.DIVERSION_FIRE.x} cy={L.DIVERSION_FIRE.z} r="1.6" fill="#ff8a3a" opacity={plan?.diversion === "fire" ? 0.9 : 0.25} />
+      <circle cx={L.PHONE_POLE.x} cy={L.PHONE_POLE.z} r="1.2" fill="#cfe6ee" opacity={plan?.diversion === "phone" ? 0.9 : 0.25} />
       {(["drain", "wire", "gate"] as Entry[]).map((e) => (
-        <path key={e} d={path(route[e])} fill="none" stroke={plan?.entry === e ? "#e8b04a" : "rgba(232,176,74,0.22)"} strokeWidth={plan?.entry === e ? 0.9 : 0.5} strokeDasharray="2 1.2" />
+        <path key={e} d={path(route[e])} fill="none" stroke={plan?.entry === e ? "#e8b04a" : "rgba(232,176,74,0.2)"} strokeWidth={(plan?.entry === e ? 0.9 : 0.5) * k * 0.6} strokeDasharray={`${2 * k} ${1.2 * k}`} />
       ))}
-      <circle cx={L.DRAIN.x} cy={L.DRAIN.z} r="1.6" fill="none" stroke="#e8b04a" strokeWidth="0.5" />
-      <circle cx={L.WIRE.x} cy={L.WIRE.z} r="1.6" fill="none" stroke="#e8b04a" strokeWidth="0.5" opacity={live?.wireCut ? 0.3 : 1} />
-      <circle cx={L.GATE.x} cy={L.GATE.z} r="1.6" fill="none" stroke="#e8b04a" strokeWidth="0.5" />
+      <circle cx={L.DRAIN.x} cy={L.DRAIN.z} r="1.8" fill="none" stroke="#e8b04a" strokeWidth="0.5" />
+      <circle cx={L.WIRE.x} cy={L.WIRE.z} r="1.8" fill="none" stroke="#e8b04a" strokeWidth="0.5" opacity={live?.wireCut ? 0.3 : 1} />
+      <circle cx={L.GATE.x} cy={L.GATE.z} r="1.8" fill="none" stroke="#e8b04a" strokeWidth="0.5" />
       {full && (
         <g>
-          {L.VILLAGE.slice(0, -1).map((h, i) => <rect key={`house${i}`} x={h.x - h.w / 2} y={h.z - h.d / 2} width={h.w} height={h.d} fill={i === 0 ? "rgba(232,176,74,0.45)" : "rgba(207,230,238,0.16)"} />)}
-          <rect x={L.CEMETERY.x - 8} y={L.CEMETERY.z - 7} width="16" height="14" fill="none" stroke="rgba(207,230,238,0.35)" strokeWidth="0.4" />
-          <text x={L.CEMETERY.x} y={L.CEMETERY.z + 11} fontSize="2.6" fill="rgba(240,240,230,0.6)" textAnchor="middle">المقبرة</text>
-          <text x="24" y="86" fontSize="3" fill="rgba(240,240,230,0.5)" textAnchor="middle">دشرة أولاد موسى</text>
-          <rect x={L.CHECKPOINT.x - 3} y={L.CHECKPOINT.z - 0.5} width="6" height="1" fill="rgba(255,120,90,0.6)" />
+          {L.VILLAGE.map((h, i) => <rect key={`house${i}`} x={h.x - h.w / 2} y={h.z - h.d / 2} width={h.w} height={h.d} fill={i === 0 ? "rgba(140,230,170,0.7)" : "rgba(207,230,238,0.22)"} />)}
+          {L.TOWN_BLOCKS.map((b, i) => <rect key={`tb${i}`} x={b.x - b.w / 2} y={b.z - b.d / 2} width={b.w} height={b.d} fill={b.wall ? "rgba(180,170,150,0.35)" : "rgba(110,150,220,0.45)"} />)}
+          {Object.values(L.TOWN).map((t) => <g key={t.en}>{T(t.x, t.z - t.r - 3 * k, t.ar, "rgba(150,190,255,0.85)")}</g>)}
+          {T(TOWN_LABEL.x, TOWN_LABEL.z, "خنشلة", "rgba(240,240,230,0.35)", 2.2)}
+          <rect x={L.CEMETERY.x - 8} y={L.CEMETERY.z - 7} width="16" height="14" fill="none" stroke="rgba(207,230,238,0.45)" strokeWidth={0.4 * k} />
+          {T(L.CEMETERY.x - 18 * k, L.CEMETERY.z + 1, "المقبرة")}
+          {T(L.SAFEHOUSE.x, L.SAFEHOUSE.z + 9 * k, "دشرة أولاد موسى", "rgba(140,230,170,0.9)")}
+          <rect x={L.CHECKPOINT.x - 3} y={L.CHECKPOINT.z - 0.5} width="6" height="1" fill="rgba(255,120,90,0.7)" />
+          <g transform={`translate(${L.MAP.maxX - 40} ${L.MAP.minZ + 40})`}>
+            <path d="M0 -22 L7 6 L0 0 L-7 6 Z" fill="rgba(240,240,230,0.6)" />
+            <text y={-28} fontSize={3 * k} fill="rgba(240,240,230,0.6)" textAnchor="middle">N</text>
+          </g>
+          <g transform={`translate(${L.MAP.minX + 30} ${L.MAP.maxZ - 30})`}>
+            <rect width="100" height={1.2 * k} fill="rgba(240,240,230,0.6)" />
+            <text x="50" y={-2 * k} fontSize={2.6 * k} fill="rgba(240,240,230,0.6)" textAnchor="middle">100 م</text>
+          </g>
         </g>
       )}
       {live?.beams.map((b, i) => <circle key={`beam${i}`} cx={b.x} cy={b.z} r="3.8" fill="rgba(230,240,255,0.25)" />)}
       {live?.soldiers.map((s, i) => (
         <g key={`sol${i}`} transform={`translate(${s.x} ${s.z}) rotate(${(-s.yaw * 180) / Math.PI})`}>
           {s.state === "down" ? (
-            <text fontSize="2.4" fill="rgba(180,180,180,0.7)" textAnchor="middle" y="0.8">✕</text>
+            <text fontSize={2.4 * k * 0.6} fill="rgba(180,180,180,0.7)" textAnchor="middle" y="0.8">✕</text>
           ) : (
             <>
-              <path d="M0 0 L-5 9 A10 10 0 0 0 5 9 Z" fill={s.state === "hunt" || s.state === "alert" ? "rgba(255,74,61,0.25)" : "rgba(255,193,74,0.14)"} />
-              <circle r="1" fill={s.state === "hunt" || s.state === "alert" ? "#ff4a3d" : "#ffc14a"} />
+              <path d="M0 0 L-5 9 A10 10 0 0 0 5 9 Z" fill={s.state === "hunt" || s.state === "alert" ? "rgba(255,74,61,0.25)" : "rgba(255,193,74,0.16)"} />
+              <circle r={full ? 2.2 : 1} fill={s.state === "hunt" || s.state === "alert" ? "#ff4a3d" : "#ffc14a"} />
             </>
           )}
         </g>
       ))}
-      {live?.allies.map((a, i) => <circle key={`ally${i}`} cx={a.x} cy={a.z} r="1" fill="#8ce6aa" />)}
-      {live?.objective && <rect x={live.objective.x - 1.2} y={live.objective.z - 1.2} width="2.4" height="2.4" transform={`rotate(45 ${live.objective.x} ${live.objective.z})`} fill="none" stroke="#ffe1aa" strokeWidth="0.5" />}
+      {live?.allies.map((a, i) => <circle key={`ally${i}`} cx={a.x} cy={a.z} r={full ? 2.4 : 1} fill="#8ce6aa" />)}
+      {live?.objective && <rect x={live.objective.x - 1.2 * k} y={live.objective.z - 1.2 * k} width={2.4 * k} height={2.4 * k} transform={`rotate(45 ${live.objective.x} ${live.objective.z})`} fill="none" stroke="#ffe1aa" strokeWidth={0.5 * k} />}
       {live && (
-        <g transform={`translate(${live.player.x} ${live.player.z}) rotate(${(-live.player.yaw * 180) / Math.PI})`}>
+        <g transform={`translate(${live.player.x} ${live.player.z}) rotate(${(-live.player.yaw * 180) / Math.PI}) scale(${full ? 2.6 : 1})`}>
           <path d="M0 -2.6 L1.7 1.8 L0 0.9 L-1.7 1.8 Z" fill="#fff" />
         </g>
       )}
@@ -585,7 +602,7 @@ export default function Barracks() {
 
       {mapOpen && entered && !planning && (
         <div data-testid="map-overlay" dir="rtl" className="absolute inset-0 z-30 grid place-items-center bg-black/55 p-6 backdrop-blur-[2px]" onClick={() => setMapOpen(false)}>
-          <div className="aspect-[192/200] h-[86vh] max-w-full rounded-2xl border border-white/10 bg-[#020a0e]/90 p-3">
+          <div className="aspect-[950/970] h-[88vh] max-w-full rounded-2xl border border-white/10 bg-[#020a0e]/90 p-3">
             <TacticalMap plan={levelRef.current?.debug().game.plan ?? null} live={live} full />
           </div>
           <p className="absolute bottom-4 text-xs text-white/40">M للإغلاق — الليل لا يتوقّف وأنت تقرأ · M to close — the night doesn't stop while you read</p>
@@ -734,8 +751,8 @@ export default function Barracks() {
               {(["benboulaid", "chihani", "laghrour", "adjoul", "boucetta", "azawi"] as const).map((id) => <img key={id} src={CAST[id].face} alt={CAST[id].ar} className="size-11 rounded-full border-2 border-black object-cover" />)}
             </div>
           )}
-          <p className="mt-5 text-[15px] leading-relaxed text-white/70">الأوراس، ليلة 31 أكتوبر 1954. في بيت بن شايبة يوزّع بن بولعيد المهام: فوجك يأخذ ثكنة الوادي — خرائطها، سلاحها، ومركباتها — قبل منتصف الليل، دون أن تنكشف الثورة قبل موعدها.</p>
-          <p className="mt-1 text-xs leading-relaxed text-white/40" dir="ltr">Aurès, 31 October 1954. In the Ben Chaïba house, Ben Boulaïd hands out the tasks: your squad takes the oued barracks — its maps, its rifles, its vehicles — before midnight, without exposing the revolution early.</p>
+          <p className="mt-5 text-[15px] leading-relaxed text-white/70">الأوراس، ليلة 31 أكتوبر 1954. في بيت بن شايبة يوزّع بن بولعيد المهام: فوج عباس لغرور يضرب خنشلة، وفوجك يأخذ الثكنة العسكرية غرب المدينة — خرائطها، سلاحها، ومركباتها — قبل منتصف الليل، دون أن تنكشف الثورة قبل موعدها.</p>
+          <p className="mt-1 text-xs leading-relaxed text-white/40" dir="ltr">Aurès, 31 October 1954. In the Ben Chaïba house, Ben Boulaïd hands out the tasks: Abbas Laghrour's men strike Khenchela, and your squad takes the army barracks west of the town — its maps, its rifles, its vehicles — before midnight, without exposing the revolution early.</p>
           <button type="button" data-testid="enter-level-button" onClick={entered ? resume : begin} disabled={!ready || webglError}
             className="mt-8 inline-flex items-center gap-3 rounded-full bg-amber-100/90 px-7 py-3 text-[15px] font-semibold text-stone-950 shadow-[0_0_40px_rgba(255,190,110,0.25)] transition-[background-color,transform,box-shadow] duration-300 hover:scale-[1.03] hover:bg-amber-50 active:scale-[0.98] disabled:opacity-40">
             {entered ? "تابع · Resume" : "ابدأ الحكاية · Begin"}

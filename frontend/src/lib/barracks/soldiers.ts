@@ -5,7 +5,7 @@
 import * as THREE from "three";
 import { makeGendarme } from "@/lib/night/figures";
 import {
-  findPath, groundAt, lineClear, COMPOUND_Y, TOWER_H, TOWERS, INFORMER, CHECKPOINT, DIVERSION_FIRE, BUILDINGS, insideCompound,
+  findPath, groundAt, lineClear, COMPOUND_Y, DV, TOWER_H, TOWERS, INFORMER, CHECKPOINT, DIVERSION_FIRE, BUILDINGS, insideCompound,
   type V2,
 } from "@/lib/barracks/map";
 
@@ -45,10 +45,14 @@ const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 const DEFS: Def[] = [
   // ---- village (Chapter beat 1: escape the surveillance) ----
   { id: "informer", role: "informer", zone: "village", x: INFORMER.x, z: INFORMER.z, yaw: FACE(1, 0.35), sweep: 1.05 },
-  { id: "gp1", role: "gendarme", zone: "village", x: 36, z: 62, yaw: 0, lantern: true, speed: 1.05,
-    route: [[36, 62], [8, 59.6], [-20, 58.6], [-21, 75], [4, 78.2], [16, 77.8], [33, 83], [37, 72]], pauses: { 2: 6, 6: 8 } },
-  { id: "gp2", role: "gendarme", zone: "village", x: 37, z: 63, yaw: 0, follow: "gp1" },
-  { id: "gpost", role: "gendarme", zone: "village", x: -17.5, z: 70.5, yaw: FACE(1, 0.2), sweep: 1.25, lantern: true },
+  { id: "gp1", role: "gendarme", zone: "village", x: 36 + DV.x, z: 62 + DV.z, yaw: 0, lantern: true, speed: 1.05,
+    route: ([[36, 62], [8, 59.6], [-20, 58.6], [-21, 75], [4, 78.2], [16, 77.8], [33, 83], [37, 72]] as V2[]).map(([x, z]) => [x + DV.x, z + DV.z] as V2), pauses: { 2: 6, 6: 8 } },
+  { id: "gp2", role: "gendarme", zone: "village", x: 37 + DV.x, z: 63 + DV.z, yaw: 0, follow: "gp1" },
+  { id: "gpost", role: "gendarme", zone: "village", x: -17.5 + DV.x, z: 70.5 + DV.z, yaw: FACE(1, 0.2), sweep: 1.25, lantern: true },
+  // a two-man gendarme patrol walks the track between the dachra and the town
+  { id: "tp1", role: "gendarme", zone: "village", x: -120, z: 515, yaw: 0, lantern: true, speed: 0.95,
+    route: [[-128, 528], [-70, 482], [-10, 430], [60, 380], [-10, 430], [-70, 482]], pauses: { 0: 10, 3: 12 } },
+  { id: "tp2", role: "gendarme", zone: "village", x: -121, z: 516, yaw: 0, follow: "tp1" },
   { id: "chk1", role: "gendarme", zone: "village", x: CHECKPOINT.x - 1.6, z: CHECKPOINT.z, yaw: 0, sweep: 0.6 },
   { id: "chk2", role: "gendarme", zone: "village", x: CHECKPOINT.x + 1.6, z: CHECKPOINT.z - 0.6, yaw: Math.PI, sweep: 0.6 },
   // ---- compound ----
