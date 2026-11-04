@@ -1,0 +1,25 @@
+{
+ "center": [
+  35.35098,
+  6.97623
+ ],
+ "source": "AWS Terrain Tiles (Terrarium), SRTM-derived",
+ "layers": {
+  "near": {
+   "n": 401,
+   "spacing": 4.0,
+   "min": 1423.0,
+   "scale": 0.1,
+   "zoom": 15,
+   "max": 2097.214976040196
+  },
+  "far": {
+   "n": 401,
+   "spacing": 128.0,
+   "min": 831.0,
+   "scale": 0.1,
+   "zoom": 10,
+   "max": 2154.636655350704
+  }
+ }
+}
