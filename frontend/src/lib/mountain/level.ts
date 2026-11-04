@@ -174,6 +174,8 @@ export class MountainLevel {
   private crouchToggle = false;
   private climb: { from: THREE.Vector3; to: THREE.Vector3; t: number } | null = null;
   private onRock = false;
+  private pinnedT = 0;
+  private scrambleT = 0;
 
   // people
   private lakhdar!: THREE.Group;
@@ -833,6 +835,7 @@ export class MountainLevel {
     if (yaw !== undefined) this.yaw = yaw;
     this.pitch = pitch;
     this.onRock = false;
+    this.pinnedT = this.scrambleT = 0;
   }
 
   // ======================= story API =======================
@@ -1156,7 +1159,11 @@ export class MountainLevel {
     const g = groundAt(x, z, this.pos.y), d = Math.hypot(x - this.pos.x, z - this.pos.z) || 1e-3;
     const rise = (g - this.pos.y) / d;
     if (this.onRock && g < this.pos.y - 0.3) return null; // stepping off the rock
-    if (rise > (this.game.carrying ? SLOPE_CARRY : SLOPE_FREE) && g - this.pos.y > 0.02) return "steep";
+    const lim = this.game.carrying ? SLOPE_CARRY : SLOPE_FREE;
+    if (rise > lim && g - this.pos.y > 0.02 && this.scrambleT <= 0) return "steep";
+    // no one-way descents on bare terrain: a grade you couldn't climb back up would trap you in a gully
+    const onTerrain = Math.abs(this.pos.y - terrainHeight(this.pos.x, this.pos.z)) < 0.05 && Math.abs(g - terrainHeight(x, z)) < 0.01;
+    if (onTerrain && -rise > lim && this.pos.y - g > 0.02) return "steep";
     if (-rise > SLOPE_DOWN && this.pos.y - g > 0.6) return "edge";
     return this.gate(x, z);
   }
@@ -1225,19 +1232,24 @@ export class MountainLevel {
     const narrow = g.route === "ridge" && nr.d < 3 && nr.s > 40 && nr.s < RIDGE_P.len - 40;
     const base = g.carrying ? (crouch ? 1.15 : narrow ? 1.05 : 1.55) : crouch ? 1.3 : run ? 5.0 : 2.7;
     const water = inWater(this.pos.x, this.pos.z);
-    const speed = base * tired * (water ? 0.8 : 1);
+    const speed = base * tired * (water ? 0.8 : 1) * (this.scrambleT > 0 ? 0.55 : 1);
     const fwd = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)), right = new THREE.Vector3(-fwd.z, 0, fwd.x);
     const wish = fwd.multiplyScalar(f).add(right.multiplyScalar(s));
     if (wish.lengthSq() > 1) wish.normalize();
     wish.multiplyScalar(speed);
     this.vel.lerp(wish, 1 - Math.exp(-dt * (this.onGround ? 9 : 2)));
     const dx = this.vel.x * dt, dz = this.vel.z * dt;
+    // safety net: pinned on ground steeper than you could have walked onto → scramble out (slowly) instead of soft-locking
+    this.scrambleT = Math.max(0, this.scrambleT - dt);
+    if (this.pinnedT > 1.2 && slopeAt(this.pos.x, this.pos.z, 0.3) > (g.carrying ? SLOPE_CARRY : SLOPE_FREE)) this.scrambleT = 2.5;
     const bx = this.blocked(this.pos.x + dx, this.pos.z);
     if (!bx) this.pos.x += dx;
     else this.vel.x = 0;
     const bz = this.blocked(this.pos.x, this.pos.z + dz);
     if (!bz) this.pos.z += dz;
     else this.vel.z = 0;
+    const pinned = wish.lengthSq() > 0.04 && (bx === "steep" || bz === "steep") && (!!bx || Math.abs(dx) < 1e-4) && (!!bz || Math.abs(dz) < 1e-4);
+    this.pinnedT = pinned ? this.pinnedT + dt : 0;
     if ((bx === "edge" || bz === "edge") && this.edgeT <= 0) {
       this.edgeT = 6;
       this.bark("ammar", "edge", BARKS.edge.ar, BARKS.edge.en, 10);
