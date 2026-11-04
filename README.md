@@ -7,7 +7,11 @@ Frontend-only Three.js first-person stealth chapters (Vite + React 19 + TypeScri
 | `/` | **الفصل الأول · The Last Night** — carry Zahra's message to Ammar before dawn (stealth, unarmed). |
 | `/barracks` | **الفصل الثاني · ليلة الفاتح · Night of the First** — on the 1 km² *Khenchela 1954* map, 31 Oct 1954, Dachra Ouled Moussa: Ben Boulaïd's meeting (portrait dialogue), escape the watched dachra with your 4-man squad, password «خالد عقبة» at the cemetery, mandatory recon, Chihani's plan, infiltrate the barracks, steal the maps and key from the HQ, seize the armory, plant charges on the vehicles, withdraw at midnight. |
 
+| `/mountain` | **المستوى الثاني · الطريق إلى الجبل · The Road to the Mountain** — after the raid, carry the wounded Lakhdar up a real Aurès slope (SRTM elevation, 16 km west of Khenchela) by the watched valley or the freezing ridge, with Ammar and a tracking dog on your trail. |
+
 Chapter II design document (systems, tuning numbers, beat chart, decision matrix): [`docs/chapter-2-night-of-the-first.md`](docs/chapter-2-night-of-the-first.md).
+
+Level 2 design document: [`docs/level-2-road-to-the-mountain.md`](docs/level-2-road-to-the-mountain.md).
 
 ## Run
 
@@ -28,3 +32,7 @@ yarn typecheck && yarn lint && yarn build
 - `memory/SPEC.md` — running spec.
 
 Test hooks: `window.__night` (Chapter I) and `window.__barracks` (`teleport`, `skipTo`, `simulate`, `applyPlan`, `focus`, `debug`). Headless browsers use low-power mode; software GL is slow (10–30 s per frame in SwiftShader).
+
+## Terrain data
+
+The mountain level's heightmaps (`frontend/public/terrain/aures-*.bin`) are real elevation of the Aurès west of Khenchela, baked from **AWS Terrain Tiles** (Terrarium; open data derived from SRTM and other public DEMs — https://registry.opendata.aws/terrain-tiles/) by `scripts/fetch_dem.py` (`uv run --with pillow --with numpy scripts/fetch_dem.py`). Google Earth terrain is not used: its terms do not allow extracting or caching its 3D data.

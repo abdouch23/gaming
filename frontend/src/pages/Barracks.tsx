@@ -737,6 +737,7 @@ export default function Barracks() {
             <p className="mt-7 border-r-2 border-amber-200/50 pr-3 text-[13px] leading-relaxed text-white/60">{OUTRO.ar}</p>
             <p className="mt-1 pr-3 text-[11px] leading-relaxed text-white/35" dir="ltr">{OUTRO.en}</p>
             <button type="button" data-testid="replay-button" onClick={() => window.location.reload()} className="mt-8 rounded-full bg-amber-100/90 px-7 py-3 text-[15px] font-semibold text-stone-950 transition-transform duration-200 hover:scale-[1.03]">أعد الليلة · Play again</button>
+            <a href="/mountain" data-testid="next-level-link" className="mt-8 mr-3 inline-block rounded-full border border-amber-100/40 px-7 py-3 text-[15px] text-amber-50 transition-transform duration-200 hover:scale-[1.03]">المستوى الثاني: الطريق إلى الجبل ←</a>
           </div>
         </div>
       )}

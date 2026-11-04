@@ -34,6 +34,7 @@ export class NightAudio {
   protected white: AudioBuffer | null = null;
   protected timers: number[] = [];
   protected running = false;
+  protected windGain: GainNode | null = null;
 
   protected build(ctx: AudioContext) {
     const master = ctx.createGain();
@@ -87,6 +88,7 @@ export class NightAudio {
     lfo(0.07, 0.018, hg.gain);
 
     this.master = master;
+    this.windGain = wg;
     this.reverb = reverb;
   }
 
@@ -99,7 +101,7 @@ export class NightAudio {
     this.timers.push(id);
   }
 
-  private bark(t: number, pitch: number, pan: number, distance: number) {
+  protected bark(t: number, pitch: number, pan: number, distance: number) {
     const ctx = this.ctx!;
     const o = ctx.createOscillator();
     o.type = "sawtooth";

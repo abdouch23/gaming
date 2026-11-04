@@ -52,6 +52,19 @@ export class BarracksAudio extends NightAudio {
     this.burst(t + 0.9, { dur: 0.6, freq: 1400, q: 0.6, gain: 0.25, wet: 1 });
   }
 
+  /** a tracking dog: distance in metres */
+  dogBark(distance: number, pan = 0) {
+    if (!this.ok()) return;
+    const t = this.ctx!.currentTime, k = Math.min(1, distance / 90);
+    const n = 1 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < n; i++) this.bark(t + i * (0.28 + Math.random() * 0.15), 420 + Math.random() * 80, pan, 0.15 + k * 0.8);
+  }
+  /** wind strength 0..1.5 (ridge gusts) */
+  setWind(level: number) {
+    if (!this.ctx || !this.windGain) return;
+    this.windGain.gain.setTargetAtTime(0.18 + level * 0.32, this.ctx.currentTime, 1.2);
+  }
+
   click() {
     if (!this.ok()) return;
     this.burst(this.ctx!.currentTime, { dur: 0.03, freq: 3200, q: 4, gain: 0.25 });
