@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#151d19">
+<title>ARBOREAL — استوديو الأشجار</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='28'%3E🌿%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+<header class="topbar"><a class="brand" href="./" aria-label="Arboreal home"><span class="brand-icon">❋</span><span>ARBOREAL<small>TREE MATERIAL STUDIO</small></span></a><span class="top-caption">الطبيعة، بكل تفاصيلها.</span><span class="live"><i></i> عرض حي · WebGL</span></header>
+<div id="app">
+<main id="view" aria-label="معاينة الشجرة ثلاثية الأبعاد">
+<div id="hud"><span class="eyebrow">PROCEDURAL COLLECTION / 001</span><h1>من الجذور إلى الضوء.</h1><p>شجرة إجرائية · خامات فيزيائية · تفاصيل حيّة</p></div>
+<div class="view-actions"><button id="reset-view" title="إعادة ضبط الكاميرا">⤢ <span>إعادة العرض</span></button><button id="save-image">↓ <span>حفظ الصورة</span></button></div>
+<div class="view-bottom"><div><span class="eyebrow">LIVE RENDER</span><div id="stat" aria-live="polite"></div></div><span class="orbit-hint">اسحب للدوران · مرّر للتقريب</span></div>
+</main>
+<aside id="ui" aria-label="إعدادات الشجرة">
+<div class="panel-heading"><span class="eyebrow">THE WORKBENCH</span><h2>اصنع شجرتك<span>01</span></h2><p>شكّل الطبيعة. اضبط الضوء. اكتشف التفاصيل.</p></div>
+<section class="work-section"><div class="section-title"><h3>الإضاءة والمزاج</h3><span>LIGHTING</span></div><div class="light-presets"><button data-light="studio" aria-pressed="true"><i class="swatch studio"></i>استوديو</button><button data-light="daylight" aria-pressed="false"><i class="swatch daylight"></i>ضوء النهار</button><button data-light="sunset" aria-pressed="false"><i class="swatch sunset"></i>الغروب</button></div><div id="light-controls"></div></section>
+<section class="work-section"><div class="section-title"><h3>مادة الورقة</h3><span>PHYSICAL MATERIAL</span></div><div class="material-heading"><span class="material-dot"></span><div>ورقة خضراء شمعية<small>Double-sided · Non-metallic</small></div><span class="pill">PBR</span></div><div id="material-controls"></div><div class="maps">
+<button data-map="base-color.png" aria-label="اللون الأساسي — Base color"><img src="assets/leaf/base-color.png" alt=""><span>BASE COLOR</span></button>
+<button data-map="normal.png" aria-label="تفاصيل السطح — Normal"><img src="assets/leaf/normal.png" alt=""><span>NORMAL</span></button>
+<button data-map="roughness.png" aria-label="الخشونة — Roughness"><img src="assets/leaf/roughness.png" alt=""><span>ROUGHNESS</span></button>
+<button data-map="ao.png" aria-label="الانسداد المحيط — AO"><img src="assets/leaf/ao.png" alt=""><span>AO</span></button></div><p class="map-note">خرائط مستخرجة من مرجعك البصري · اضغط للتكبير</p></section>
+<section class="work-section"><div class="section-title"><h3>بنية الشجرة</h3><span>GENERATOR</span></div><div id="generator"></div></section>
+<div id="msg" role="status"></div><footer class="panel-footer">ARBOREAL <span>GROW SOMETHING EXTRAORDINARY.</span></footer>
+</aside>
+</div>
+<dialog id="map-dialog"><div class="dialog-header"><h2 id="map-title"></h2><button id="close-map" aria-label="إغلاق">✕</button></div><img id="map-image" alt="خريطة مادة الورقة المكبّرة"><p>خريطة مستخرجة من الصورة المرجعية، وليست مسحاً ضوئياً معايراً.</p></dialog>
+<script src="vendor/three.min.js"></script><script src="tree.js"></script>
+</body></html>
