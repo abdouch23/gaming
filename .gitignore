@@ -1,0 +1,3 @@
+.hoplite/*
+!.hoplite/settings.json
+__pycache__/
